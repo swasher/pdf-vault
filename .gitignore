@@ -1,0 +1,87 @@
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# Node
+node_modules
+.npm
+.yarn
+yarn-error.log
+.pnpm-debug.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+config/firebase-admin.json
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Svelte / SvelteKit
+.svelte-kit
+static/build
+build
+.svelte-kit/types
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Parcel (if used)
+.parcel-cache
+
+# Testing
+coverage
+
+# Production
+build
+dist
+
+# Misc
+*.bak
+*.gho
+*.ori
+*.orig
+*.tmp
+
+# Shadcn-svelte specific (if any generated files, but usually covered above)
+
+# WebStorm specific
+.idea/
+*.iml
+
+
+
+
+
+
+
+
+
+
+
