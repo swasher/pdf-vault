@@ -37,8 +37,8 @@
     let sections = $state<SectionNode[]>([]);
     let loading = $state(true);
     let error = $state<string | null>(null);
-    let hasKey = $state<boolean | null>(null);
     let settingsLoaded = $state(false);
+    let b2Exists = $state<boolean | null>(null);
 
     const getFileName = (file: FileRef) => (typeof file === "string" ? file : file.name);
     const getFileUrl = (file: FileRef) => {
@@ -48,7 +48,7 @@
     };
     const formatSize = (size?: number | null) =>
         typeof size === "number" ? `${(size / (1024 * 1024)).toFixed(1)} MB` : "";
-    const getKeyPhrase = () => (typeof localStorage !== "undefined" ? localStorage.getItem("pdf-vault:key") ?? "" : "");
+    const getKeyPhrase = () => "";
 
     const fetchDocuments = async (uid: string) => {
         loading = true;
@@ -87,13 +87,13 @@
 
     const fetchSettings = async (uid: string) => {
         try {
-            const res = await fetch(`/api/settings?userId=${encodeURIComponent(uid)}`);
+            const res = await fetch(`/api/user/b2?userId=${encodeURIComponent(uid)}`);
             if (!res.ok) throw new Error(await res.text());
             const data = await res.json();
-            hasKey = data.exists ?? false;
+            b2Exists = data.exists ?? false;
         } catch (err) {
             console.error("Failed to load settings", err);
-            hasKey = null;
+            b2Exists = null;
         } finally {
             settingsLoaded = true;
         }
@@ -154,7 +154,7 @@
             } else {
                 documents = [];
                 loading = false;
-                hasKey = null;
+                b2Exists = null;
                 settingsLoaded = false;
             }
         });
@@ -281,50 +281,10 @@
         return "";
     };
 
-    const requireKeyGate = $derived(
-        !loading && settingsLoaded && hasKey === false && documents.length === 0
-    );
+    const requireB2Gate = $derived(!loading && settingsLoaded && b2Exists === false);
 
-    const deriveKey = async (phrase: string) => {
-        const encoder = new TextEncoder();
-        const base = encoder.encode(phrase);
-        const salt = encoder.encode("pdf-vault-salt");
-        const keyMaterial = await crypto.subtle.importKey("raw", base, "PBKDF2", false, ["deriveKey"]);
-        return crypto.subtle.deriveKey(
-            { name: "PBKDF2", salt, iterations: 200_000, hash: "SHA-256" },
-            keyMaterial,
-            { name: "AES-GCM", length: 256 },
-            false,
-            ["decrypt"]
-        );
-    };
-
-    const decryptBytes = async (data: ArrayBuffer, key: CryptoKey) => {
-        const bytes = new Uint8Array(data);
-        const nonce = bytes.slice(0, 12);
-        const cipher = bytes.slice(12);
-        return crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, key, cipher);
-    };
-
-    const decryptToBlobUrl = async (file: FileRef, mime: string) => {
-        const phrase = getKeyPhrase();
-        if (!phrase) throw new Error("Нет ключа. Перейдите в Settings");
-        const key = await deriveKey(phrase);
-        const res = await fetch(getFileUrl(file));
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.arrayBuffer();
-        const plain = await decryptBytes(data, key);
-        const blob = new Blob([plain], { type: mime });
-        return URL.createObjectURL(blob);
-    };
-
-    const openDecryptedPdf = async (doc: DocumentItem) => {
-        try {
-            const url = await decryptToBlobUrl(doc.files.pdf, "application/pdf");
-            window.open(url, "_blank");
-        } catch (err) {
-            alert(err instanceof Error ? err.message : "Не удалось расшифровать PDF");
-        }
+    const openPdf = (doc: DocumentItem) => {
+        window.open(getFileUrl(doc.files.pdf), "_blank");
     };
 
     const matchSearch = (doc: DocumentItem, query: string) => {
@@ -410,12 +370,10 @@
         <p class="text-muted-foreground text-sm">Загружаем список...</p>
     {:else if !user}
         <p class="text-muted-foreground text-sm">Войдите, чтобы увидеть свои документы.</p>
-    {:else if requireKeyGate}
+    {:else if requireB2Gate}
         <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm">
-            <p class="font-medium">Требуется ключ</p>
-            <p class="text-muted-foreground">
-                Перед загрузкой документов задайте ключ на странице настроек.
-            </p>
+            <p class="font-medium">Не заданы B2 настройки</p>
+            <p class="text-muted-foreground">Добавьте Backblaze креды в Settings.</p>
             <a class="text-primary text-sm hover:underline" href="/settings">Перейти в Settings</a>
         </div>
     {:else if error}
@@ -491,31 +449,20 @@
     {#snippet Card({ doc }: { doc: DocumentItem })}
     <article class="rounded-lg border bg-card shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
         <a
-            href="#"
+            href={getFileUrl(doc.files.pdf)}
             class="flex flex-col gap-2 p-2"
             rel="noreferrer"
-            target="_self"
+            target="_blank"
             onclick={(event) => {
-                event.preventDefault();
-                openDecryptedPdf(doc);
+                event.stopPropagation();
             }}
         >
             <div class="relative aspect-[3/4] overflow-hidden rounded-md bg-muted">
                 <img
-                    src={doc.encrypted !== false ? getFileUrl(doc.files.thumbnail) : getFileUrl(doc.files.thumbnail)}
+                    src={getFileUrl(doc.files.thumbnail)}
                     alt={doc.title}
                     loading="lazy"
                     class="absolute inset-0 h-full w-full object-cover"
-                    onload={(event) => {
-                        if (doc.encrypted !== false) {
-                            // Swap to decrypted
-                            decryptToBlobUrl(doc.files.thumbnail, "image/jpeg")
-                                .then((url) => ((event.currentTarget as HTMLImageElement).src = url))
-                                .catch(() => {
-                                    (event.currentTarget as HTMLImageElement).style.display = "none";
-                                });
-                        }
-                    }}
                     onerror={(event) => ((event.currentTarget as HTMLImageElement).style.display = "none")}
                 />
             </div>

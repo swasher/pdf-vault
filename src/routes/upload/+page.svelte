@@ -33,9 +33,9 @@
     let selectedSectionId = $state<string | null>(null);
     let selectedSubsectionId = $state<string | null>(null);
     let selectedCategory = $state("");
-    let hasKey = $state<boolean | null>(null);
     let hasDocuments = $state<boolean | null>(null);
     let checking = $state(false);
+    let b2Exists = $state<boolean | null>(null);
     let b2Exists = $state<boolean | null>(null);
 
     const workerPromise = browser
@@ -100,37 +100,6 @@
         uploads = uploads.map((item) => (item.id === id ? { ...item, ...patch } : item));
     };
 
-    const deriveKey = async (phrase: string) => {
-        const encoder = new TextEncoder();
-        const base = encoder.encode(phrase);
-        const salt = encoder.encode("pdf-vault-salt");
-        const keyMaterial = await crypto.subtle.importKey("raw", base, "PBKDF2", false, ["deriveKey"]);
-        return crypto.subtle.deriveKey(
-            { name: "PBKDF2", salt, iterations: 200_000, hash: "SHA-256" },
-            keyMaterial,
-            { name: "AES-GCM", length: 256 },
-            false,
-            ["encrypt", "decrypt"]
-        );
-    };
-
-    const encryptBytes = async (data: ArrayBuffer, key: CryptoKey) => {
-        const nonce = crypto.getRandomValues(new Uint8Array(12));
-        const cipher = await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, data);
-        const combined = new Uint8Array(nonce.byteLength + cipher.byteLength);
-        combined.set(nonce, 0);
-        combined.set(new Uint8Array(cipher), nonce.byteLength);
-        return combined;
-    };
-
-    const encryptFileWithKey = async (file: File, key: CryptoKey) => {
-        const data = await file.arrayBuffer();
-        const encrypted = await encryptBytes(data, key);
-        return new File([encrypted], file.name, { type: "application/octet-stream" });
-    };
-
-    const getKeyPhrase = () => (browser ? localStorage.getItem("pdf-vault:key") ?? "" : "");
-
     const uploadFile = async (file: File) => {
         const id = crypto.randomUUID();
         uploads = [...uploads, { id, name: file.name, size: file.size, status: "uploading" }];
@@ -139,27 +108,17 @@
             if (!user) {
                 throw new Error("Для загрузки необходимо войти");
             }
-            const phrase = getKeyPhrase();
-            if (!phrase) {
-                throw new Error("Сначала задайте ключ в Settings");
-            }
-            const key = await deriveKey(phrase);
             const thumbnailFile = await generateThumbnail(file);
 
-            // Шифруем
-            const encryptedPdf = await encryptFileWithKey(file, key);
-            const encryptedThumb = await encryptFileWithKey(thumbnailFile, key);
-
-            // Создаем FormData и отправляем зашифрованные файл и миниатюру
+            // Создаем FormData и отправляем файл и миниатюру
             const formData = new FormData();
-            formData.append("file", encryptedPdf);
-            formData.append("thumbnail", encryptedThumb);
+            formData.append("file", file);
+            formData.append("thumbnail", thumbnailFile);
             formData.append("thumbnailName", thumbnailFile.name);
             formData.append("title", file.name.replace(/\.[^/.]+$/, ""));
             formData.append("userId", user.uid);
             if (selectedSectionId) formData.append("sectionId", selectedSectionId);
             if (selectedSubsectionId) formData.append("subsectionId", selectedSubsectionId);
-            formData.append("encrypted", "true");
 
             const response = await fetch("/api/b2/upload-url", {
                 method: "POST",
@@ -202,10 +161,10 @@
     };
 
     const fetchSettings = async (uid: string) => {
-        const res = await fetch(`/api/settings?userId=${encodeURIComponent(uid)}`);
+        const res = await fetch(`/api/user/b2?userId=${encodeURIComponent(uid)}`);
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        hasKey = data.exists ?? false;
+        b2Exists = data.exists ?? false;
     };
 
     const fetchB2Status = async (uid: string) => {
@@ -236,7 +195,6 @@
                         ),
                         fetchSettings(nextUser.uid),
                         checkDocs(nextUser.uid),
-                        fetchB2Status(nextUser.uid),
                     ])
                         .then(([sectionsResult]) => {
                             if (sectionsResult?.status === "fulfilled") {
@@ -252,7 +210,6 @@
                     selectedSectionId = null;
                     selectedSubsectionId = null;
                     selectedCategory = "";
-                    hasKey = null;
                     hasDocuments = null;
                     b2Exists = null;
                 }
@@ -264,14 +221,7 @@
 </script>
 
 <div class="flex w-full flex-col gap-4 p-6">
-    {#if hasKey === false && hasDocuments === false}
-        <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm">
-            <p class="font-medium">Требуется ключ</p>
-            <p class="text-muted-foreground">Перед загрузкой документов задайте ключ в Settings.</p>
-            <a class="text-primary text-sm hover:underline" href="/settings">Перейти в Settings</a>
-        </div>
-    {/if}
-    {#if b2Exists === false}
+    {#if hasDocuments === false && b2Exists === false}
         <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm">
             <p class="font-medium">Не заданы B2 настройки</p>
             <p class="text-muted-foreground">Добавьте Backblaze креды на странице Settings.</p>
