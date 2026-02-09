@@ -7,12 +7,25 @@ import { resolve } from "path";
 
 let adminApp: AdminApp | null = null;
 
-const getAdminApp = () => {
-	if (adminApp) return adminApp;
+const loadCredentials = () => {
+	const inline = env.FIREBASE_ADMIN_CREDENTIALS;
+	if (inline) {
+		try {
+			return JSON.parse(inline);
+		} catch {
+			// maybe base64
+			try {
+				const decoded = Buffer.from(inline, "base64").toString("utf-8");
+				return JSON.parse(decoded);
+			} catch (err) {
+				throw new Error("FIREBASE_ADMIN_CREDENTIALS is invalid JSON/base64 JSON");
+			}
+		}
+	}
 
 	const credentialsPath = env.FIREBASE_ADMIN_CREDENTIALS_PATH;
 	if (!credentialsPath) {
-		throw new Error("FIREBASE_ADMIN_CREDENTIALS_PATH is not set");
+		throw new Error("FIREBASE_ADMIN_CREDENTIALS or FIREBASE_ADMIN_CREDENTIALS_PATH is not set");
 	}
 
 	const absolutePath = resolve(process.cwd(), credentialsPath);
@@ -20,7 +33,13 @@ const getAdminApp = () => {
 		throw new Error(`Firebase admin credentials not found at ${absolutePath}`);
 	}
 
-	const serviceAccount = JSON.parse(readFileSync(absolutePath, "utf-8"));
+	return JSON.parse(readFileSync(absolutePath, "utf-8"));
+};
+
+const getAdminApp = () => {
+	if (adminApp) return adminApp;
+
+	const serviceAccount = loadCredentials();
 
 	adminApp = getApps().length
 		? getApps()[0]!
