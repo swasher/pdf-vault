@@ -23,6 +23,7 @@
         sectionId?: string | null;
         subsectionId?: string | null;
         uploadedAt?: number;
+        encrypted?: boolean;
     };
 
     type SectionNode = {
@@ -54,7 +55,11 @@
                 throw new Error(await response.text());
             }
             const data = await response.json();
-            documents = data.documents ?? [];
+            documents =
+                (data.documents ?? []).map((doc: DocumentItem) => ({
+                    ...doc,
+                    encrypted: doc.encrypted !== false,
+                })) ?? [];
         } catch (err) {
             const message = err instanceof Error ? err.message : "Не удалось загрузить документы";
             error = message;
@@ -318,11 +323,6 @@
         }
     };
 
-    const getDecryptedThumbnail = async (doc: DocumentItem) => {
-        const url = await decryptToBlobUrl(doc.files.thumbnail, "image/jpeg");
-        return url;
-    };
-
     const matchSearch = (doc: DocumentItem, query: string) => {
         if (!query.trim()) return true;
         const tokens = query
@@ -484,23 +484,36 @@
     {/if}
 </div>
 
-{#snippet Card({ doc }: { doc: DocumentItem })}
+    {#snippet Card({ doc }: { doc: DocumentItem })}
     <article class="rounded-lg border bg-card shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-        <a href={getFileUrl(doc.files.pdf)} class="flex flex-col gap-2 p-2" rel="noreferrer" target="_blank">
+        <a
+            href="#"
+            class="flex flex-col gap-2 p-2"
+            rel="noreferrer"
+            target="_self"
+            onclick={(event) => {
+                event.preventDefault();
+                openDecryptedPdf(doc);
+            }}
+        >
             <div class="relative aspect-[3/4] overflow-hidden rounded-md bg-muted">
-                {#if doc.encrypted}
-                    <div class="absolute inset-0 flex items-center justify-center text-xs font-semibold text-muted-foreground">
-                        Зашифровано
-                    </div>
-                {:else}
-                    <img
-                        src={getFileUrl(doc.files.thumbnail)}
-                        alt={doc.title}
-                        loading="lazy"
-                        class="absolute inset-0 h-full w-full object-cover"
-                        onerror={(event) => ((event.currentTarget as HTMLImageElement).style.display = "none")}
-                    />
-                {/if}
+                <img
+                    src={doc.encrypted !== false ? getFileUrl(doc.files.thumbnail) : getFileUrl(doc.files.thumbnail)}
+                    alt={doc.title}
+                    loading="lazy"
+                    class="absolute inset-0 h-full w-full object-cover"
+                    onload={(event) => {
+                        if (doc.encrypted !== false) {
+                            // Swap to decrypted
+                            decryptToBlobUrl(doc.files.thumbnail, "image/jpeg")
+                                .then((url) => ((event.currentTarget as HTMLImageElement).src = url))
+                                .catch(() => {
+                                    (event.currentTarget as HTMLImageElement).style.display = "none";
+                                });
+                        }
+                    }}
+                    onerror={(event) => ((event.currentTarget as HTMLImageElement).style.display = "none")}
+                />
             </div>
             <div class="space-y-1">
                 <div class="border-t border-border/60 pt-2">
@@ -524,28 +537,6 @@
                 <span class="opacity-60">—</span>
             {/if}
             <div class="ml-auto flex items-center gap-2">
-                {#if doc.encrypted}
-                    <button
-                        class="inline-flex h-7 items-center justify-center rounded-md border border-border bg-background/80 px-2 text-[11px] text-muted-foreground shadow-sm hover:text-primary"
-                        onclick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            openDecryptedPdf(doc);
-                        }}
-                    >
-                        Открыть
-                    </button>
-                {:else}
-                    <a
-                        class="inline-flex h-7 items-center justify-center rounded-md border border-border bg-background/80 px-2 text-[11px] text-muted-foreground shadow-sm hover:text-primary"
-                        href={getFileUrl(doc.files.pdf)}
-                        target="_blank"
-                        rel="noreferrer"
-                        onclick={(event) => event.stopPropagation()}
-                    >
-                        Открыть
-                    </a>
-                {/if}
                 <button
                     class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground shadow-sm hover:text-primary"
                     aria-label="Редактировать"
