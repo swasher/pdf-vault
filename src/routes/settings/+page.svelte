@@ -15,6 +15,8 @@
     let hasDocuments = $state<boolean | null>(null);
     let checkingDocs = $state(false);
     let generating = $state(false);
+    let encryptionKeyHash = $state("");
+    let sessionKey = $state("");
     let b2KeyId = $state("");
     let b2ApplicationKey = $state("");
     let b2BucketId = $state("");
@@ -41,6 +43,7 @@
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         hasKey = data.exists ?? false;
+        encryptionKeyHash = data.encryptionKeyHash ?? "";
         if (!hasKey) {
             const cached = localStorage.getItem(localKeyKey);
             if (cached) keyPhrase = cached;
@@ -162,6 +165,26 @@
         }
     };
 
+    const verifySessionKey = async () => {
+        error = null;
+        info = null;
+        if (!sessionKey.trim()) {
+            error = "Введите ключ-фразу";
+            return;
+        }
+        if (!encryptionKeyHash) {
+            error = "Хеш ключа не найден";
+            return;
+        }
+        const hashed = await hashKey(sessionKey.trim());
+        if (hashed !== encryptionKeyHash) {
+            error = "Ключ не совпадает с сохранённым";
+            return;
+        }
+        localStorage.setItem(localKeyKey, sessionKey.trim());
+        info = "Ключ принят для этой сессии.";
+    };
+
     onMount(() => {
         const auth = getFirebaseAuth();
         if (!auth) {
@@ -260,6 +283,20 @@
                 <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                     Ключ установлен. Изменение или удаление недоступны.
                 </div>
+                <label class="flex flex-col gap-1 text-sm">
+                    <span class="text-muted-foreground">Ввести ключ для сессии</span>
+                    <div class="flex items-center gap-2">
+                        <input
+                            class="border-input bg-background text-foreground focus-visible:ring-ring/50 focus-visible:outline-none w-full rounded-md border px-3 py-2 text-sm shadow-sm focus-visible:ring-2"
+                            type="text"
+                            placeholder="Введите сохранённый ключ"
+                            bind:value={sessionKey}
+                        />
+                        <Button type="button" variant="outline" onclick={verifySessionKey}>
+                            Применить
+                        </Button>
+                    </div>
+                </label>
             {/if}
             {#if error}
                 <div class="text-destructive text-xs">{error}</div>
