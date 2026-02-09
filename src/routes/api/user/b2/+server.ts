@@ -22,22 +22,14 @@ export const POST: RequestHandler = async ({ request }) => {
 		throw error(400, "userId, keyId, applicationKey, bucketId, bucketName are required");
 	}
 
-	const master = process.env.B2_MASTER_SECRET;
-	const isMasterValid = (() => {
-		if (!master) return false;
-		if (master.length >= 32) return true;
-		try {
-			return Buffer.from(master, "hex").length >= 32;
-		} catch {
-			return false;
-		}
-	})();
-	if (!isMasterValid) {
-		throw error(500, "B2 master secret is missing or too short (set B2_MASTER_SECRET env)");
-	}
-
 	const payload: StoredB2Payload = { keyId, applicationKey, bucketId, bucketName, endpoint };
-	await saveUserB2Credentials(userId, payload);
+	try {
+		await saveUserB2Credentials(userId, payload);
+	} catch (err) {
+		const message =
+			err instanceof Error ? err.message : "Failed to save credentials (check B2_MASTER_SECRET)";
+		throw error(500, message);
+	}
 
 	return json({ success: true });
 };

@@ -17,11 +17,15 @@ const getMasterKey = () => {
 	if (!secret) {
 		throw new Error(`Missing ${MASTER_ENV_KEY} env variable`);
 	}
-	try {
-		return Buffer.from(secret, "hex");
-	} catch {
-		return Buffer.from(secret, "utf-8");
+
+	const isHex = /^[0-9a-fA-F]+$/.test(secret) && secret.length % 2 === 0;
+	const buf = isHex ? Buffer.from(secret, "hex") : Buffer.from(secret, "utf-8");
+
+	if (buf.length < 32) {
+		throw new Error(`${MASTER_ENV_KEY} must be at least 32 bytes (use 64-char hex or longer utf-8)`);
 	}
+
+	return buf;
 };
 
 const encryptPayload = (data: StoredB2Payload) => {
