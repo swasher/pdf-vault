@@ -1,17 +1,26 @@
 import { env } from "$env/dynamic/private";
 import { error } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
+import { getB2CredentialsForUserOrEnv } from "$lib/server/b2-creds";
 
 export const GET: RequestHandler = async ({ url, fetch }) => {
 	const name = url.searchParams.get("name");
+	const userId = url.searchParams.get("userId");
 
 	if (!name) {
 		throw error(400, "name is required");
 	}
 
-	const keyId = env.BLACKBAZE_KEYID;
-	const applicationKey = env.BLACKBAZE_APPLICATIONKEY;
-	const bucketName = env.BLACKBAZE_BUCKETNAME;
+	if (!userId) {
+		throw error(400, "userId is required");
+	}
+
+	const creds = await getB2CredentialsForUserOrEnv(userId);
+	if (!creds) {
+		throw error(400, "B2 credentials are missing");
+	}
+
+	const { keyId, applicationKey, bucketName, endpoint } = creds;
 
 	if (!keyId || !applicationKey || !bucketName) {
 		throw error(500, "Backblaze credentials are missing");
@@ -34,7 +43,7 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
 	const authData = await authResponse.json();
 
 	const fileResponse = await fetch(
-		`${authData.downloadUrl}/file/${bucketName}/${encodeURIComponent(name)}`,
+		`${endpoint ?? authData.downloadUrl}/file/${bucketName}/${encodeURIComponent(name)}`,
 		{
 			headers: {
 				Authorization: authData.authorizationToken,

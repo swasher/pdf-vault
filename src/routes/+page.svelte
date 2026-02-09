@@ -41,7 +41,11 @@
     let settingsLoaded = $state(false);
 
     const getFileName = (file: FileRef) => (typeof file === "string" ? file : file.name);
-    const getFileUrl = (file: FileRef) => `/api/b2/file?name=${encodeURIComponent(getFileName(file))}`;
+    const getFileUrl = (file: FileRef) => {
+        const uid = user?.uid;
+        if (!uid) throw new Error("Нет userId для запроса файла");
+        return `/api/b2/file?name=${encodeURIComponent(getFileName(file))}&userId=${encodeURIComponent(uid)}`;
+    };
     const formatSize = (size?: number | null) =>
         typeof size === "number" ? `${(size / (1024 * 1024)).toFixed(1)} MB` : "";
     const getKeyPhrase = () => (typeof localStorage !== "undefined" ? localStorage.getItem("pdf-vault:key") ?? "" : "");

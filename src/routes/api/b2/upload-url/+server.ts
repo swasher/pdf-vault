@@ -2,6 +2,7 @@ import { env } from "$env/dynamic/private";
 import { error, json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import crypto from "crypto";
+import { getB2CredentialsForUserOrEnv } from "$lib/server/b2-creds";
 
 const getAuthData = async (fetchFn: typeof fetch, keyId: string, applicationKey: string) => {
 	const authHeader = Buffer.from(`${keyId}:${applicationKey}`).toString("base64");
@@ -94,15 +95,12 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 		throw error(400, "title is required");
 	}
 
-	const keyId = env.BLACKBAZE_KEYID;
-	const applicationKey = env.BLACKBAZE_APPLICATIONKEY;
-	const bucketId = env.BLACKBAZE_BUCKETID;
-	const bucketName = env.BLACKBAZE_BUCKETNAME;
-
-	if (!keyId || !applicationKey || !bucketId || !bucketName) {
-		throw error(500, "Backblaze credentials are missing");
+	const creds = await getB2CredentialsForUserOrEnv(userId);
+	if (!creds) {
+		throw error(400, "B2 credentials are missing");
 	}
 
+	const { keyId, applicationKey, bucketId, bucketName, endpoint } = creds;
 	const authData = await getAuthData(fetch, keyId, applicationKey);
 
 	const baseName = file.name.replace(/\.[^/.]+$/, "");
@@ -174,6 +172,6 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 					fileUrl: localThumbnailUrl,
 				}
 			: null,
-		downloadUrl: `${authData.downloadUrl}/file/${bucketName}/${pdfResult.fileName}`,
+		downloadUrl: `${endpoint ?? authData.downloadUrl}/file/${bucketName}/${pdfResult.fileName}`,
 	});
 };

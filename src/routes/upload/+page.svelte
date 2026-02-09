@@ -36,6 +36,7 @@
     let hasKey = $state<boolean | null>(null);
     let hasDocuments = $state<boolean | null>(null);
     let checking = $state(false);
+    let b2Exists = $state<boolean | null>(null);
 
     const workerPromise = browser
         ? import("pdfjs-dist/build/pdf.worker.min.mjs?url").then((mod) => mod.default)
@@ -207,6 +208,13 @@
         hasKey = data.exists ?? false;
     };
 
+    const fetchB2Status = async (uid: string) => {
+        const res = await fetch(`/api/user/b2?userId=${encodeURIComponent(uid)}`);
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        b2Exists = data.exists ?? false;
+    };
+
     const checkDocs = async (uid: string) => {
         const res = await fetch(`/api/documents?userId=${encodeURIComponent(uid)}&limit=1`);
         if (!res.ok) throw new Error(await res.text());
@@ -228,6 +236,7 @@
                         ),
                         fetchSettings(nextUser.uid),
                         checkDocs(nextUser.uid),
+                        fetchB2Status(nextUser.uid),
                     ])
                         .then(([sectionsResult]) => {
                             if (sectionsResult?.status === "fulfilled") {
@@ -245,6 +254,7 @@
                     selectedCategory = "";
                     hasKey = null;
                     hasDocuments = null;
+                    b2Exists = null;
                 }
             });
         } else {
@@ -258,6 +268,13 @@
         <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm">
             <p class="font-medium">Требуется ключ</p>
             <p class="text-muted-foreground">Перед загрузкой документов задайте ключ в Settings.</p>
+            <a class="text-primary text-sm hover:underline" href="/settings">Перейти в Settings</a>
+        </div>
+    {/if}
+    {#if b2Exists === false}
+        <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm">
+            <p class="font-medium">Не заданы B2 настройки</p>
+            <p class="text-muted-foreground">Добавьте Backblaze креды на странице Settings.</p>
             <a class="text-primary text-sm hover:underline" href="/settings">Перейти в Settings</a>
         </div>
     {/if}
@@ -308,7 +325,7 @@
             accept="application/pdf"
             maxFileSize={200 * FileDropZone.MEGABYTE}
             fileCount={uploads.length}
-            disabled={!user || hasKey === false && hasDocuments === false}
+            disabled={!user || (hasKey === false && hasDocuments === false) || b2Exists === false}
     >
         <FileDropZone.Trigger />
     </FileDropZone.Root>
