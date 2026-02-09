@@ -36,7 +36,6 @@
     let hasDocuments = $state<boolean | null>(null);
     let checking = $state(false);
     let b2Exists = $state<boolean | null>(null);
-    let b2Exists = $state<boolean | null>(null);
 
     const workerPromise = browser
         ? import("pdfjs-dist/build/pdf.worker.min.mjs?url").then((mod) => mod.default)
