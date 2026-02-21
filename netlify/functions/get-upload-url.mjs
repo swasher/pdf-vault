@@ -38,6 +38,3 @@ export default async (request) => {
 		return json({ message }, status);
 	}
 };
-
-export const config = { path: "/get-upload-url" };
-

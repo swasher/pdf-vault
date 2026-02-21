@@ -156,11 +156,16 @@
     };
 
     const requestUploadUrl = async (filename: string, kind: "pdf" | "thumbnail") => {
-        const response = await authFetch("/.netlify/functions/get-upload-url", {
+        const requestInit = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ filename, kind }),
-        });
+        } satisfies RequestInit;
+
+        let response = await authFetch("/.netlify/functions/get-upload-url", requestInit);
+        if (response.status === 404) {
+            response = await authFetch("/get-upload-url", requestInit);
+        }
         if (!response.ok) {
             const payload = await response.json().catch(() => ({}));
             throw new Error(payload.message ?? "Не удалось получить upload URL");

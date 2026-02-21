@@ -70,11 +70,16 @@
     };
 
     const getSignedDownloadUrl = async (fileName: string) => {
-        const response = await authFetch("/.netlify/functions/get-download-url", {
+        const requestInit = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ fileName }),
-        });
+        } satisfies RequestInit;
+
+        let response = await authFetch("/.netlify/functions/get-download-url", requestInit);
+        if (response.status === 404) {
+            response = await authFetch("/get-download-url", requestInit);
+        }
         if (!response.ok) {
             throw new Error(await response.text());
         }
