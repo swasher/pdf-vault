@@ -5,6 +5,7 @@
     import {
         createAndStoreMasterKey,
         getStoredMasterKey,
+        removeStoredMasterKey,
         restoreMasterKeyFromPhrase,
     } from "$lib/crypto/master-key";
     import { getFirebaseAuth, onAuthStateChanged } from "$lib/firebase/client";
@@ -24,6 +25,7 @@
     let creatingKey = $state(false);
     let restoringKey = $state(false);
     let revealingPhrase = $state(false);
+    let removingKey = $state(false);
 
     const resetKeyUi = () => {
         keyError = null;
@@ -121,6 +123,30 @@
         backupPhrase = null;
         confirmChecked = false;
         keyError = null;
+    };
+
+    const removeKeyFromDevice = async () => {
+        if (!masterKey) return;
+        const confirmed = window.confirm(
+            "Удалить master key с этого устройства? После этого чтение/загрузка файлов будут недоступны, пока вы не восстановите ключ по backup phrase."
+        );
+        if (!confirmed) return;
+
+        removingKey = true;
+        keyError = null;
+        try {
+            await removeStoredMasterKey();
+            clearBackupConfirmed();
+            masterKey = null;
+            keyFingerprint = null;
+            backupConfirmed = false;
+            backupPhrase = null;
+            confirmChecked = false;
+        } catch (err) {
+            keyError = err instanceof Error ? err.message : "Не удалось удалить ключ с устройства";
+        } finally {
+            removingKey = false;
+        }
     };
 
     $effect(() => {
@@ -232,7 +258,7 @@
                     <button
                         class="rounded-md border px-3 py-2 text-xs"
                         onclick={revealBackupPhrase}
-                        disabled={revealingPhrase}
+                        disabled={revealingPhrase || removingKey}
                     >
                         {revealingPhrase ? "Показываем..." : "Показать backup phrase"}
                     </button>
@@ -263,6 +289,15 @@
                         {/if}
                     </div>
                 {/if}
+                <div class="border-t border-border/60 pt-3">
+                    <button
+                        class="rounded-md border border-red-500/40 px-3 py-2 text-xs text-red-600 hover:bg-red-500/10"
+                        onclick={removeKeyFromDevice}
+                        disabled={removingKey}
+                    >
+                        {removingKey ? "Удаляем..." : "Удалить ключ с этого устройства"}
+                    </button>
+                </div>
             </div>
         {/if}
 

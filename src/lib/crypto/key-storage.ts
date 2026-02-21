@@ -36,6 +36,13 @@ const storePut = (store: IDBObjectStore, value: unknown): Promise<void> =>
 		req.onerror = () => reject(req.error);
 	});
 
+const storeDelete = (store: IDBObjectStore, key: string): Promise<void> =>
+	new Promise((resolve, reject) => {
+		const req = store.delete(key);
+		req.onsuccess = () => resolve();
+		req.onerror = () => reject(req.error);
+	});
+
 const getOrCreateDeviceKey = async (store: IDBObjectStore): Promise<CryptoKey> => {
 	const existing = await storeGet<{ id: string; key: CryptoKey }>(store, DEVICE_KEY_ID);
 	if (existing?.key) return existing.key;
@@ -106,4 +113,16 @@ export const loadMasterKey = async (): Promise<CryptoKey | null> => {
 		["encrypt", "decrypt"]
 	);
 	return key;
+};
+
+export const clearStoredMasterKey = async (): Promise<void> => {
+	const db = await openDb();
+	const tx = db.transaction(STORE, "readwrite");
+	const store = tx.objectStore(STORE);
+	await Promise.all([storeDelete(store, WRAPPED_MASTER_KEY_ID), storeDelete(store, DEVICE_KEY_ID)]);
+	await new Promise<void>((resolve, reject) => {
+		tx.oncomplete = () => resolve();
+		tx.onerror = () => reject(tx.error);
+		tx.onabort = () => reject(tx.error);
+	});
 };

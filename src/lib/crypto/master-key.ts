@@ -1,5 +1,10 @@
 import { generateMasterKey, masterKeyToPhrase, phraseToMasterKey } from "$lib/crypto/crypto";
-import { hasStoredMasterKey, loadMasterKey, saveMasterKey } from "$lib/crypto/key-storage";
+import {
+	clearStoredMasterKey,
+	hasStoredMasterKey,
+	loadMasterKey,
+	saveMasterKey,
+} from "$lib/crypto/key-storage";
 
 export const hasMasterKey = async () => hasStoredMasterKey();
 
@@ -18,3 +23,4 @@ export const restoreMasterKeyFromPhrase = async (phrase: string) => {
 	return key;
 };
 
+export const removeStoredMasterKey = async () => clearStoredMasterKey();
