@@ -1,11 +1,8 @@
 <script lang="ts">
     import { browser } from "$app/environment";
-    import { encryptForStorage, masterKeyToPhrase } from "$lib/crypto/crypto";
-    import {
-        createAndStoreMasterKey,
-        getStoredMasterKey,
-        restoreMasterKeyFromPhrase,
-    } from "$lib/crypto/master-key";
+    import { isBackupConfirmedFor } from "$lib/crypto/backup-ack";
+    import { encryptForStorage, masterKeyFingerprint } from "$lib/crypto/crypto";
+    import { getStoredMasterKey } from "$lib/crypto/master-key";
     import { authFetch } from "$lib/firebase/auth-fetch";
     import * as FileDropZone from "$lib/components/ui/file-drop-zone/index.js";
     import { getFirebaseAuth, onAuthStateChanged } from "$lib/firebase/client.js";
@@ -41,13 +38,9 @@
     let selectedSubsectionId = $state<string | null>(null);
     let selectedCategory = $state("");
     let masterKey = $state<CryptoKey | null>(null);
+    let backupConfirmed = $state(false);
     let keyLoading = $state(false);
     let keyError = $state<string | null>(null);
-    let backupPhrase = $state<string | null>(null);
-    let restorePhrase = $state("");
-    let creatingKey = $state(false);
-    let restoringKey = $state(false);
-    let revealingPhrase = $state(false);
 
     const workerPromise = browser
         ? import("pdfjs-dist/build/pdf.worker.min.mjs?url").then((mod) => mod.default)
@@ -115,57 +108,20 @@
         keyLoading = true;
         keyError = null;
         try {
-            masterKey = await getStoredMasterKey();
+            const storedKey = await getStoredMasterKey();
+            masterKey = storedKey;
+            if (!storedKey) {
+                backupConfirmed = false;
+                return;
+            }
+            const fingerprint = await masterKeyFingerprint(storedKey);
+            backupConfirmed = isBackupConfirmedFor(fingerprint);
         } catch (err) {
             keyError = err instanceof Error ? err.message : "Не удалось загрузить ключ";
             masterKey = null;
+            backupConfirmed = false;
         } finally {
             keyLoading = false;
-        }
-    };
-
-    const createKey = async () => {
-        creatingKey = true;
-        keyError = null;
-        try {
-            const result = await createAndStoreMasterKey();
-            masterKey = result.key;
-            backupPhrase = result.phrase;
-        } catch (err) {
-            keyError = err instanceof Error ? err.message : "Не удалось создать ключ";
-        } finally {
-            creatingKey = false;
-        }
-    };
-
-    const restoreKey = async () => {
-        if (!restorePhrase.trim()) {
-            keyError = "Введите backup phrase";
-            return;
-        }
-        restoringKey = true;
-        keyError = null;
-        try {
-            masterKey = await restoreMasterKeyFromPhrase(restorePhrase.trim());
-            restorePhrase = "";
-            backupPhrase = null;
-        } catch (err) {
-            keyError = err instanceof Error ? err.message : "Не удалось восстановить ключ";
-        } finally {
-            restoringKey = false;
-        }
-    };
-
-    const revealBackupPhrase = async () => {
-        if (!masterKey) return;
-        revealingPhrase = true;
-        keyError = null;
-        try {
-            backupPhrase = await masterKeyToPhrase(masterKey);
-        } catch (err) {
-            keyError = err instanceof Error ? err.message : "Не удалось показать backup phrase";
-        } finally {
-            revealingPhrase = false;
         }
     };
 
@@ -220,7 +176,10 @@
                 throw new Error("Для загрузки необходимо войти");
             }
             if (!masterKey) {
-                throw new Error("Сначала настройте ключ шифрования");
+                throw new Error("Сначала настройте master key в Settings");
+            }
+            if (!backupConfirmed) {
+                throw new Error("Подтвердите сохранение backup phrase в Settings");
             }
             const thumbnailFile = await generateThumbnail(file);
             const [encryptedPdf, encryptedThumbnail] = await Promise.all([
@@ -328,7 +287,7 @@
                     selectedSubsectionId = null;
                     selectedCategory = "";
                     masterKey = null;
-                    backupPhrase = null;
+                    backupConfirmed = false;
                     keyError = null;
                 }
             });
@@ -344,74 +303,23 @@
             Проверяем ключ шифрования...
         </div>
     {:else if user && !masterKey}
-        <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm space-y-3">
-            <p class="font-medium">Настройка ключа шифрования</p>
+        <div class="rounded-md border border-yellow-400/30 bg-yellow-500/10 px-4 py-3 text-sm space-y-2">
+            <p class="font-medium">Загрузка заблокирована: нет master key</p>
             <p class="text-muted-foreground">
-                Для загрузки нужен мастер-ключ. Создайте новый ключ или восстановите его из backup phrase.
+                Создайте новый ключ или восстановите его в <a href="/settings" class="underline">Settings</a>.
             </p>
-            <div class="flex flex-wrap items-center gap-2">
-                <button
-                    class="rounded-md border px-3 py-2 text-xs"
-                    onclick={createKey}
-                    disabled={creatingKey || restoringKey}
-                >
-                    {creatingKey ? "Создаем..." : "Создать новый ключ"}
-                </button>
-                <input
-                    class="border-input bg-background text-foreground focus-visible:ring-ring/50 focus-visible:outline-none rounded-md border px-3 py-2 text-sm shadow-sm focus-visible:ring-2 min-w-72"
-                    placeholder="Вставьте backup phrase"
-                    bind:value={restorePhrase}
-                    disabled={creatingKey || restoringKey}
-                />
-                <button
-                    class="rounded-md border px-3 py-2 text-xs"
-                    onclick={restoreKey}
-                    disabled={creatingKey || restoringKey}
-                >
-                    {restoringKey ? "Восстанавливаем..." : "Восстановить"}
-                </button>
-            </div>
-            {#if backupPhrase}
-                <div class="rounded-md border border-yellow-400/40 bg-yellow-500/10 px-3 py-2 text-xs">
-                    <p class="font-medium">Сохраните backup phrase</p>
-                    <p class="mt-1 font-mono break-all">{backupPhrase}</p>
-                </div>
-            {/if}
-            {#if keyError}
-                <div class="text-destructive text-xs">{keyError}</div>
-            {/if}
         </div>
-    {:else if user && masterKey}
-        <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm space-y-3">
-            <p class="font-medium">Ключ шифрования активен</p>
+    {:else if user && !backupConfirmed}
+        <div class="rounded-md border border-yellow-400/30 bg-yellow-500/10 px-4 py-3 text-sm space-y-2">
+            <p class="font-medium">Загрузка заблокирована: backup phrase не подтверждена</p>
             <p class="text-muted-foreground">
-                Рекомендуется сохранить backup phrase: она нужна для доступа к файлам на новом устройстве.
+                Подтвердите сохранение backup phrase в <a href="/settings" class="underline">Settings</a>.
             </p>
-            <div class="flex items-center gap-2">
-                <button class="rounded-md border px-3 py-2 text-xs" onclick={revealBackupPhrase} disabled={revealingPhrase}>
-                    {revealingPhrase ? "Показываем..." : "Показать backup phrase"}
-                </button>
-                {#if backupPhrase}
-                    <button
-                        class="rounded-md border px-3 py-2 text-xs"
-                        onclick={() => {
-                            backupPhrase = null;
-                        }}
-                    >
-                        Скрыть
-                    </button>
-                {/if}
-            </div>
-            {#if backupPhrase}
-                <div class="rounded-md border border-yellow-400/40 bg-yellow-500/10 px-3 py-2 text-xs">
-                    <p class="font-medium">Сохраните backup phrase</p>
-                    <p class="mt-1 font-mono break-all">{backupPhrase}</p>
-                </div>
-            {/if}
-            {#if keyError}
-                <div class="text-destructive text-xs">{keyError}</div>
-            {/if}
         </div>
+    {/if}
+
+    {#if keyError}
+        <div class="text-destructive text-xs">{keyError}</div>
     {/if}
 
     <div class="flex flex-col gap-2">
@@ -460,7 +368,7 @@
             accept="application/pdf"
             maxFileSize={200 * FileDropZone.MEGABYTE}
             fileCount={uploads.length}
-            disabled={!user || keyLoading || !masterKey}
+            disabled={!user || keyLoading || !masterKey || !backupConfirmed}
     >
         <FileDropZone.Trigger />
     </FileDropZone.Root>

@@ -32,14 +32,14 @@
 ### Ключи
 - Master key хранится на устройстве в IndexedDB (wrapped через device key).
 - Есть create/restore flow через backup phrase.
-- В UI есть повторный показ backup phrase (пока на `/upload`).
+- В UI есть повторный показ backup phrase и подтверждение сохранения.
 
 ### UI
 - Header: `PDF`, `Upload`, `Settings`, тема, логин/аватар, поиск.
 - Sidebar: section/subsection CRUD.
 - Главная: список документов, локальный поиск/фильтрация, edit metadata, delete.
-- Upload: выбор раздела + upload с шифрованием.
-- Settings: пока информационная страница.
+- Upload: выбор раздела + upload с шифрованием (блокируется без ключа/подтвержденной backup phrase).
+- Settings: create/restore master key, показ backup phrase, подтверждение сохранения phrase.
 
 ## 3. Текущая модель данных (Firestore)
 - `documents`:
@@ -70,7 +70,6 @@
 ### Что пока отличается от идеальной схемы в docs
 - Нет отдельной структуры `users/{uid}/files/*`; используется коллекция `documents`.
 - Нет полей `users/{uid}.masterKeySetup/backupVerified` в Firestore.
-- Backup phrase UX еще не «жесткий» (нет явного подтверждения сохранения перед продолжением).
 
 ## 6. Инварианты безопасности
 - Нельзя отправлять в B2 незашифрованный пользовательский контент.

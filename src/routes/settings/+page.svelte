@@ -1,11 +1,140 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import { masterKeyFingerprint, masterKeyToPhrase } from "$lib/crypto/crypto";
+    import { clearBackupConfirmed, isBackupConfirmedFor, setBackupConfirmedFor } from "$lib/crypto/backup-ack";
+    import {
+        createAndStoreMasterKey,
+        getStoredMasterKey,
+        restoreMasterKeyFromPhrase,
+    } from "$lib/crypto/master-key";
     import { getFirebaseAuth, onAuthStateChanged } from "$lib/firebase/client";
     import type { User } from "firebase/auth";
 
     let user = $state<User | null>(null);
     let loading = $state(true);
     let error = $state<string | null>(null);
+    let keyLoading = $state(false);
+    let keyError = $state<string | null>(null);
+    let masterKey = $state<CryptoKey | null>(null);
+    let keyFingerprint = $state<string | null>(null);
+    let backupPhrase = $state<string | null>(null);
+    let backupConfirmed = $state(false);
+    let confirmChecked = $state(false);
+    let restorePhrase = $state("");
+    let creatingKey = $state(false);
+    let restoringKey = $state(false);
+    let revealingPhrase = $state(false);
+
+    const resetKeyUi = () => {
+        keyError = null;
+        backupPhrase = null;
+        confirmChecked = false;
+        restorePhrase = "";
+    };
+
+    const refreshKeyState = async () => {
+        keyLoading = true;
+        keyError = null;
+        try {
+            masterKey = await getStoredMasterKey();
+            if (!masterKey) {
+                keyFingerprint = null;
+                backupConfirmed = false;
+                return;
+            }
+            keyFingerprint = await masterKeyFingerprint(masterKey);
+            backupConfirmed = isBackupConfirmedFor(keyFingerprint);
+        } catch (err) {
+            keyError = err instanceof Error ? err.message : "Не удалось загрузить ключ";
+            masterKey = null;
+            keyFingerprint = null;
+            backupConfirmed = false;
+        } finally {
+            keyLoading = false;
+        }
+    };
+
+    const createKey = async () => {
+        creatingKey = true;
+        keyError = null;
+        try {
+            const result = await createAndStoreMasterKey();
+            masterKey = result.key;
+            keyFingerprint = await masterKeyFingerprint(result.key);
+            clearBackupConfirmed();
+            backupConfirmed = false;
+            backupPhrase = result.phrase;
+            confirmChecked = false;
+        } catch (err) {
+            keyError = err instanceof Error ? err.message : "Не удалось создать ключ";
+        } finally {
+            creatingKey = false;
+        }
+    };
+
+    const restoreKey = async () => {
+        if (!restorePhrase.trim()) {
+            keyError = "Введите backup phrase";
+            return;
+        }
+        restoringKey = true;
+        keyError = null;
+        try {
+            const key = await restoreMasterKeyFromPhrase(restorePhrase.trim());
+            masterKey = key;
+            keyFingerprint = await masterKeyFingerprint(key);
+            if (keyFingerprint) {
+                setBackupConfirmedFor(keyFingerprint);
+            }
+            backupConfirmed = true;
+            restorePhrase = "";
+            backupPhrase = null;
+            confirmChecked = false;
+        } catch (err) {
+            keyError = err instanceof Error ? err.message : "Не удалось восстановить ключ";
+        } finally {
+            restoringKey = false;
+        }
+    };
+
+    const revealBackupPhrase = async () => {
+        if (!masterKey) return;
+        revealingPhrase = true;
+        keyError = null;
+        try {
+            backupPhrase = await masterKeyToPhrase(masterKey);
+            confirmChecked = false;
+        } catch (err) {
+            keyError = err instanceof Error ? err.message : "Не удалось показать backup phrase";
+        } finally {
+            revealingPhrase = false;
+        }
+    };
+
+    const confirmBackupSaved = () => {
+        if (!keyFingerprint || !backupPhrase || !confirmChecked) {
+            keyError = "Подтвердите, что сохранили backup phrase";
+            return;
+        }
+        setBackupConfirmedFor(keyFingerprint);
+        backupConfirmed = true;
+        backupPhrase = null;
+        confirmChecked = false;
+        keyError = null;
+    };
+
+    $effect(() => {
+        if (typeof window === "undefined") return;
+        if (!user || !masterKey || backupConfirmed) return;
+
+        const onBeforeUnload = (event: BeforeUnloadEvent) => {
+            event.preventDefault();
+            event.returnValue = "";
+        };
+
+        window.addEventListener("beforeunload", onBeforeUnload);
+        return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    });
 
     onMount(() => {
         const auth = getFirebaseAuth();
@@ -14,39 +143,133 @@
             loading = false;
             return;
         }
-        const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
+        const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
             user = nextUser;
+            resetKeyUi();
+            if (!nextUser) {
+                masterKey = null;
+                keyFingerprint = null;
+                backupConfirmed = false;
+                loading = false;
+                return;
+            }
+            await refreshKeyState();
             loading = false;
         });
         return () => unsubscribe();
     });
 </script>
 
-<div class="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-6">
+<div class="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
     <div>
         <h1 class="text-2xl font-semibold">Settings</h1>
-        <p class="text-sm text-muted-foreground">Страница сведений о текущей архитектуре.</p>
+        <p class="text-sm text-muted-foreground">
+            Управление master key и backup phrase. Без них доступ к зашифрованным файлам будет потерян.
+        </p>
     </div>
 
     {#if loading}
         <p class="text-muted-foreground text-sm">Проверяем сессию...</p>
     {:else if !user}
-        <p class="text-muted-foreground text-sm">Войдите, чтобы использовать приложение.</p>
+        <p class="text-muted-foreground text-sm">Войдите, чтобы управлять ключом.</p>
     {:else if error}
         <div class="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
         </div>
     {:else}
-        <div class="space-y-3 rounded-md border border-muted-foreground/30 bg-muted/20 p-4 text-sm">
-            <p class="font-medium">Что настроено сейчас</p>
-            <ul class="list-disc pl-5 text-muted-foreground">
-                <li>B2 credentials задаются только через серверные env-переменные.</li>
-                <li>Клиент получает только временные presigned URL через Netlify Functions.</li>
-                <li>Все файлы в B2 хранятся в зашифрованном виде (AES-GCM).</li>
-            </ul>
-            <p class="text-xs text-muted-foreground">
-                Восстановление master key делается на странице Upload через backup phrase.
-            </p>
-        </div>
+        {#if keyLoading}
+            <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm">
+                Проверяем ключ шифрования...
+            </div>
+        {/if}
+
+        {#if !keyLoading && !masterKey}
+            <div class="rounded-md border border-muted-foreground/30 bg-muted/20 p-4 space-y-3">
+                <p class="font-medium">Ключ шифрования не настроен</p>
+                <p class="text-sm text-muted-foreground">
+                    Создайте новый ключ или восстановите из backup phrase. Без ключа вы не сможете загружать и читать
+                    зашифрованные файлы.
+                </p>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button
+                        class="rounded-md border px-3 py-2 text-xs"
+                        onclick={createKey}
+                        disabled={creatingKey || restoringKey}
+                    >
+                        {creatingKey ? "Создаем..." : "Создать новый ключ"}
+                    </button>
+                    <input
+                        class="border-input bg-background text-foreground focus-visible:ring-ring/50 focus-visible:outline-none rounded-md border px-3 py-2 text-sm shadow-sm focus-visible:ring-2 min-w-72"
+                        placeholder="Вставьте backup phrase"
+                        bind:value={restorePhrase}
+                        disabled={creatingKey || restoringKey}
+                    />
+                    <button
+                        class="rounded-md border px-3 py-2 text-xs"
+                        onclick={restoreKey}
+                        disabled={creatingKey || restoringKey}
+                    >
+                        {restoringKey ? "Восстанавливаем..." : "Восстановить"}
+                    </button>
+                </div>
+            </div>
+        {/if}
+
+        {#if masterKey}
+            <div class="rounded-md border border-muted-foreground/30 bg-muted/20 p-4 space-y-3">
+                <p class="font-medium">Master key активен</p>
+                {#if backupConfirmed}
+                    <div class="rounded-md border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm">
+                        Backup phrase подтверждена на этом устройстве.
+                    </div>
+                {:else}
+                    <div class="rounded-md border border-yellow-400/40 bg-yellow-500/10 px-3 py-2 text-sm">
+                        Внимание: backup phrase не подтверждена. Без нее вы потеряете доступ к файлам на новом
+                        устройстве.
+                    </div>
+                {/if}
+                <div class="flex flex-wrap items-center gap-2">
+                    <button
+                        class="rounded-md border px-3 py-2 text-xs"
+                        onclick={revealBackupPhrase}
+                        disabled={revealingPhrase}
+                    >
+                        {revealingPhrase ? "Показываем..." : "Показать backup phrase"}
+                    </button>
+                    {#if backupPhrase}
+                        <button
+                            class="rounded-md border px-3 py-2 text-xs"
+                            onclick={() => {
+                                backupPhrase = null;
+                                confirmChecked = false;
+                            }}
+                        >
+                            Скрыть
+                        </button>
+                    {/if}
+                </div>
+                {#if backupPhrase}
+                    <div class="rounded-md border border-yellow-400/40 bg-yellow-500/10 px-3 py-2 text-xs space-y-2">
+                        <p class="font-medium">Сохраните backup phrase в менеджере паролей</p>
+                        <p class="font-mono break-all">{backupPhrase}</p>
+                        {#if !backupConfirmed}
+                            <label class="flex items-center gap-2 text-xs">
+                                <input type="checkbox" bind:checked={confirmChecked} />
+                                <span>Я сохранил backup phrase и понимаю, что без нее восстановление невозможно.</span>
+                            </label>
+                            <button class="rounded-md border px-3 py-2 text-xs" onclick={confirmBackupSaved}>
+                                Подтвердить сохранение
+                            </button>
+                        {/if}
+                    </div>
+                {/if}
+            </div>
+        {/if}
+
+        {#if keyError}
+            <div class="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                {keyError}
+            </div>
+        {/if}
     {/if}
 </div>

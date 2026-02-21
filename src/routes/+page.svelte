@@ -361,11 +361,11 @@
     const openPdf = async (doc: DocumentItem) => {
         const fileName = getFileName(doc.files.pdf);
         const encryption = doc.encryption?.pdf;
-        if (encryption) {
-            if (!masterKey) {
-                keyError = "Ключ шифрования не найден. Восстановите его через Upload.";
-                return;
-            }
+            if (encryption) {
+                if (!masterKey) {
+                keyError = "Ключ шифрования не найден. Восстановите его через Settings.";
+                    return;
+                }
             try {
                 keyError = null;
                 const encryptedBytes = await fetchEncryptedBytes(fileName);
@@ -508,7 +508,7 @@
         {/if}
         {#if !keyLoading && !masterKey && hasEncryptedDocs}
             <div class="rounded-md border border-yellow-400/30 bg-yellow-500/10 px-4 py-3 text-sm">
-                Зашифрованные файлы недоступны: восстановите ключ на странице Upload.
+                Зашифрованные файлы недоступны: восстановите ключ на странице Settings.
             </div>
         {/if}
         <div class="flex flex-col gap-8">

@@ -43,6 +43,14 @@ export const masterKeyToPhrase = async (masterKey: CryptoKey): Promise<string> =
 	return hex.match(/.{1,8}/g)?.join("-") ?? hex;
 };
 
+export const masterKeyFingerprint = async (masterKey: CryptoKey): Promise<string> => {
+	const raw = await crypto.subtle.exportKey("raw", masterKey);
+	const digest = await crypto.subtle.digest("SHA-256", raw);
+	return Array.from(new Uint8Array(digest))
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+};
+
 export const phraseToMasterKey = async (phrase: string): Promise<CryptoKey> => {
 	const normalized = phrase.replace(/[^0-9a-fA-F]/g, "").toLowerCase();
 	if (normalized.length !== 64) {
