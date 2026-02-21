@@ -10,6 +10,10 @@ export const hasMasterKey = async () => hasStoredMasterKey();
 
 export const getStoredMasterKey = async () => loadMasterKey();
 
+export const parseMasterKeyPhrase = async (phrase: string) => phraseToMasterKey(phrase);
+
+export const storeMasterKey = async (key: CryptoKey) => saveMasterKey(key);
+
 export const createAndStoreMasterKey = async () => {
 	const key = await generateMasterKey();
 	await saveMasterKey(key);

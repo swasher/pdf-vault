@@ -49,16 +49,44 @@
     let keyLoading = $state(false);
     let keyError = $state<string | null>(null);
     let masterKey = $state<CryptoKey | null>(null);
+    let invalidMasterKey = $state(false);
     let thumbnailUrls = $state<Record<string, string>>({});
     let thumbnailLoading = $state<Record<string, boolean>>({});
+    let downloadUrlEndpoint = $state<"/.netlify/functions/get-download-url" | "/get-download-url" | null>(
+        null
+    );
 
     const getFileName = (file: FileRef) => (typeof file === "string" ? file : file.name);
     const formatSize = (size?: number | null) =>
         typeof size === "number" ? `${(size / (1024 * 1024)).toFixed(1)} MB` : "";
+    const isKeyDecryptionError = (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err ?? "");
+        return /operationerror|decrypt|cipher|authentication/i.test(message);
+    };
+
+    const markInvalidMasterKey = () => {
+        invalidMasterKey = true;
+        keyError = "Ключ шифрования не подходит к вашим данным. Восстановите корректный backup phrase в Settings.";
+    };
+    const parseResponseMessage = async (response: Response, fallback: string) => {
+        const contentType = response.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+            try {
+                const data = (await response.json()) as { message?: string };
+                if (typeof data.message === "string" && data.message.trim()) {
+                    return data.message;
+                }
+            } catch {
+                // Ignore JSON parsing errors and use fallback.
+            }
+        }
+        return `${fallback} (${response.status})`;
+    };
 
     const loadMasterKey = async () => {
         keyLoading = true;
         keyError = null;
+        invalidMasterKey = false;
         try {
             masterKey = await getStoredMasterKey();
         } catch (err) {
@@ -76,12 +104,23 @@
             body: JSON.stringify({ fileName }),
         } satisfies RequestInit;
 
-        let response = await authFetch("/.netlify/functions/get-download-url", requestInit);
-        if (response.status === 404) {
-            response = await authFetch("/get-download-url", requestInit);
+        let response: Response;
+        if (downloadUrlEndpoint) {
+            response = await authFetch(downloadUrlEndpoint, requestInit);
+        } else {
+            response = await authFetch("/.netlify/functions/get-download-url", requestInit);
+            if (response.ok) {
+                downloadUrlEndpoint = "/.netlify/functions/get-download-url";
+            } else if (response.status === 404) {
+                response = await authFetch("/get-download-url", requestInit);
+                if (response.ok) {
+                    downloadUrlEndpoint = "/get-download-url";
+                }
+            }
         }
+
         if (!response.ok) {
-            throw new Error(await response.text());
+            throw new Error(await parseResponseMessage(response, "Не удалось получить ссылку на файл"));
         }
         const data = (await response.json()) as { downloadUrl?: string };
         if (!data.downloadUrl) throw new Error("downloadUrl is missing");
@@ -91,7 +130,7 @@
     const fetchEncryptedBytes = async (fileName: string) => {
         const downloadUrl = await getSignedDownloadUrl(fileName);
         const response = await fetch(downloadUrl);
-        if (!response.ok) throw new Error(await response.text());
+        if (!response.ok) throw new Error(`Не удалось скачать зашифрованный файл (${response.status})`);
         return response.arrayBuffer();
     };
 
@@ -133,17 +172,29 @@
     const ensureThumbnailUrl = async (doc: DocumentItem) => {
         const encryption = doc.encryption?.thumbnail;
         if (!encryption || !masterKey) return;
+        if (invalidMasterKey) return;
         if (thumbnailUrls[doc.id] || thumbnailLoading[doc.id]) return;
 
         thumbnailLoading = { ...thumbnailLoading, [doc.id]: true };
         try {
             const encryptedBytes = await fetchEncryptedBytes(getFileName(doc.files.thumbnail));
-            const plainBytes = await decryptFromStorage(encryptedBytes, encryption, masterKey);
+            let plainBytes: ArrayBuffer;
+            try {
+                plainBytes = await decryptFromStorage(encryptedBytes, encryption, masterKey);
+            } catch (err) {
+                if (isKeyDecryptionError(err)) {
+                    markInvalidMasterKey();
+                    return;
+                }
+                throw err;
+            }
             const mimeType = encryption.mimeType || "image/jpeg";
             const blobUrl = URL.createObjectURL(new Blob([plainBytes], { type: mimeType }));
             thumbnailUrls = { ...thumbnailUrls, [doc.id]: blobUrl };
         } catch (err) {
-            console.error("Failed to decrypt thumbnail", err);
+            if (err instanceof Error && !/404/.test(err.message)) {
+                console.error("Failed to load thumbnail", err);
+            }
         } finally {
             const next = { ...thumbnailLoading };
             delete next[doc.id];
@@ -216,6 +267,7 @@
                 documents = [];
                 loading = false;
                 masterKey = null;
+                invalidMasterKey = false;
                 keyLoading = false;
                 keyError = null;
             }
@@ -360,10 +412,23 @@
                 keyError = "Ключ шифрования не найден. Восстановите его через Settings.";
                     return;
                 }
+                if (invalidMasterKey) {
+                    keyError = "Текущий ключ не подходит. Восстановите корректный backup phrase в Settings.";
+                    return;
+                }
             try {
                 keyError = null;
                 const encryptedBytes = await fetchEncryptedBytes(fileName);
-                const plainBytes = await decryptFromStorage(encryptedBytes, encryption, masterKey);
+                let plainBytes: ArrayBuffer;
+                try {
+                    plainBytes = await decryptFromStorage(encryptedBytes, encryption, masterKey);
+                } catch (err) {
+                    if (isKeyDecryptionError(err)) {
+                        markInvalidMasterKey();
+                        return;
+                    }
+                    throw err;
+                }
                 const mimeType = encryption.mimeType || "application/pdf";
                 openBlobInNewTab(new Blob([plainBytes], { type: mimeType }));
                 return;
@@ -441,7 +506,7 @@
     );
 
     $effect(() => {
-        if (!masterKey) return;
+        if (!masterKey || invalidMasterKey) return;
         for (const doc of documents) {
             if (doc.encryption?.thumbnail) {
                 ensureThumbnailUrl(doc);

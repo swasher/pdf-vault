@@ -17,9 +17,47 @@ import {
 	type Auth,
 } from "firebase/auth";
 
+const normalizeEnvValue = (value: string): string => value.trim().replace(/^['"]|['"]$/g, "");
+
+const normalizeAuthDomain = (value: string): string => {
+	let normalized = normalizeEnvValue(value);
+	normalized = normalized.replace(/^https?:\/\//i, "");
+	normalized = normalized.replace(/\/+$/, "");
+	normalized = normalized.replace(/=+$/, "");
+	if (normalized.includes("/")) {
+		normalized = normalized.split("/")[0];
+	}
+	return normalized;
+};
+
+const normalizeApiKey = (value: string): string => {
+	let normalized = normalizeEnvValue(value);
+	// Firebase web API key typically does not end with "=".
+	if (/=+$/.test(normalized)) {
+		normalized = normalized.replace(/=+$/, "");
+	}
+	return normalized;
+};
+
+const rawApiKey = PUBLIC_FIREBASE_API_KEY;
+const rawAuthDomain = PUBLIC_FIREBASE_AUTH_DOMAIN;
+const normalizedApiKey = normalizeApiKey(rawApiKey);
+const normalizedAuthDomain = normalizeAuthDomain(rawAuthDomain);
+
+if (browser && import.meta.env.DEV) {
+	if (rawApiKey !== normalizedApiKey) {
+		console.warn("[firebase] PUBLIC_FIREBASE_API_KEY was normalized (removed trailing/invalid characters).");
+	}
+	if (rawAuthDomain !== normalizedAuthDomain) {
+		console.warn(
+			"[firebase] PUBLIC_FIREBASE_AUTH_DOMAIN was normalized (removed protocol/path/trailing characters)."
+		);
+	}
+}
+
 const firebaseConfig = {
-	apiKey: PUBLIC_FIREBASE_API_KEY,
-	authDomain: PUBLIC_FIREBASE_AUTH_DOMAIN,
+	apiKey: normalizedApiKey,
+	authDomain: normalizedAuthDomain,
 	projectId: PUBLIC_FIREBASE_PROJECT_ID,
 	storageBucket: PUBLIC_FIREBASE_STORAGE_BUCKET,
 	messagingSenderId: PUBLIC_FIREBASE_MESSAGING_SENDER_ID,

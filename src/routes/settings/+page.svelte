@@ -1,13 +1,20 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import { masterKeyFingerprint, masterKeyToPhrase } from "$lib/crypto/crypto";
+    import {
+        decryptFromStorage,
+        masterKeyFingerprint,
+        masterKeyToPhrase,
+        type EncryptedBlobMeta,
+    } from "$lib/crypto/crypto";
     import { clearBackupConfirmed, isBackupConfirmedFor, setBackupConfirmedFor } from "$lib/crypto/backup-ack";
     import {
         createAndStoreMasterKey,
         getStoredMasterKey,
+        parseMasterKeyPhrase,
         removeStoredMasterKey,
-        restoreMasterKeyFromPhrase,
+        storeMasterKey,
     } from "$lib/crypto/master-key";
+    import { authFetch } from "$lib/firebase/auth-fetch";
     import { getFirebaseAuth, onAuthStateChanged } from "$lib/firebase/client";
     import type { User } from "firebase/auth";
 
@@ -26,6 +33,78 @@
     let restoringKey = $state(false);
     let revealingPhrase = $state(false);
     let removingKey = $state(false);
+
+    type FileRef = { name: string; id?: string } | string;
+    type DocumentForValidation = {
+        files: { pdf: FileRef; thumbnail: FileRef };
+        encryption?: {
+            pdf?: EncryptedBlobMeta;
+            thumbnail?: EncryptedBlobMeta;
+        };
+    };
+
+    const getFileName = (file: FileRef) => (typeof file === "string" ? file : file.name);
+    const isKeyDecryptionError = (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err ?? "");
+        return /operationerror|decrypt|cipher|authentication/i.test(message);
+    };
+
+    const getSignedDownloadUrl = async (fileName: string) => {
+        const requestInit = {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fileName }),
+        } satisfies RequestInit;
+
+        let response = await authFetch("/.netlify/functions/get-download-url", requestInit);
+        if (response.status === 404) {
+            response = await authFetch("/get-download-url", requestInit);
+        }
+
+        if (!response.ok) {
+            throw new Error(`Не удалось получить ссылку для проверки ключа (${response.status})`);
+        }
+
+        const data = (await response.json()) as { downloadUrl?: string };
+        if (!data.downloadUrl) throw new Error("Сервер не вернул ссылку для проверки ключа");
+        return data.downloadUrl;
+    };
+
+    const validateMasterKeyAgainstExistingData = async (candidateKey: CryptoKey) => {
+        const response = await authFetch("/api/documents?limit=50");
+        if (!response.ok) {
+            throw new Error("Не удалось проверить ключ: список документов недоступен");
+        }
+
+        const data = (await response.json()) as { documents?: DocumentForValidation[] };
+        const documents = data.documents ?? [];
+        const candidate = documents.find((doc) => doc.encryption?.thumbnail || doc.encryption?.pdf);
+        if (!candidate) {
+            return;
+        }
+
+        const meta = candidate.encryption?.thumbnail ?? candidate.encryption?.pdf;
+        const fileRef = candidate.encryption?.thumbnail ? candidate.files.thumbnail : candidate.files.pdf;
+        if (!meta || !fileRef) {
+            return;
+        }
+
+        const downloadUrl = await getSignedDownloadUrl(getFileName(fileRef));
+        const encryptedResponse = await fetch(downloadUrl);
+        if (!encryptedResponse.ok) {
+            throw new Error(`Не удалось скачать файл для проверки ключа (${encryptedResponse.status})`);
+        }
+
+        const encryptedBytes = await encryptedResponse.arrayBuffer();
+        try {
+            await decryptFromStorage(encryptedBytes, meta, candidateKey);
+        } catch (err) {
+            if (isKeyDecryptionError(err)) {
+                throw new Error("Неверный backup phrase: ключ не подходит к существующим файлам.");
+            }
+            throw err;
+        }
+    };
 
     const resetKeyUi = () => {
         keyError = null;
@@ -82,7 +161,9 @@
         restoringKey = true;
         keyError = null;
         try {
-            const key = await restoreMasterKeyFromPhrase(restorePhrase.trim());
+            const key = await parseMasterKeyPhrase(restorePhrase.trim());
+            await validateMasterKeyAgainstExistingData(key);
+            await storeMasterKey(key);
             masterKey = key;
             keyFingerprint = await masterKeyFingerprint(key);
             if (keyFingerprint) {
