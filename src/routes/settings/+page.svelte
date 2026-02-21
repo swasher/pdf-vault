@@ -44,6 +44,28 @@
     };
 
     const getFileName = (file: FileRef) => (typeof file === "string" ? file : file.name);
+    const parseResponseMessage = async (response: Response): Promise<string> => {
+        const contentType = response.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+            try {
+                const data = (await response.json()) as { message?: string };
+                if (typeof data.message === "string" && data.message.trim()) {
+                    return data.message.trim();
+                }
+            } catch {
+                // Ignore parse failures and try text below.
+            }
+        }
+
+        try {
+            const text = (await response.text()).trim();
+            if (text) return text.slice(0, 200);
+        } catch {
+            // Ignore.
+        }
+
+        return "";
+    };
     const isKeyDecryptionError = (err: unknown) => {
         const message = err instanceof Error ? err.message : String(err ?? "");
         return /operationerror|decrypt|cipher|authentication/i.test(message);
@@ -73,7 +95,11 @@
     const validateMasterKeyAgainstExistingData = async (candidateKey: CryptoKey) => {
         const response = await authFetch("/api/documents?limit=50");
         if (!response.ok) {
-            throw new Error("Не удалось проверить ключ: список документов недоступен");
+            const details = await parseResponseMessage(response);
+            const suffix = details ? `: ${details}` : "";
+            throw new Error(
+                `Не удалось проверить ключ: список документов недоступен (${response.status}${suffix})`
+            );
         }
 
         const data = (await response.json()) as { documents?: DocumentForValidation[] };
