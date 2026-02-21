@@ -18,6 +18,8 @@ export const POST: RequestHandler = async ({ request }) => {
 		section = null,
 		sectionId = null,
 		subsectionId = null,
+		encryption = null,
+		encrypted = false,
 	} = body ?? {};
 
 	if (!title || !files?.pdf || !files?.thumbnail) {
@@ -37,6 +39,8 @@ export const POST: RequestHandler = async ({ request }) => {
 		section,
 		sectionId,
 		subsectionId,
+		encryption,
+		encrypted: Boolean(encrypted || encryption),
 		searchTokens: title.toLowerCase().split(/\s+/).filter(Boolean),
 		uploadedAt: Timestamp.now(),
 	});

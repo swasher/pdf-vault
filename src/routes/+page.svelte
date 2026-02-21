@@ -1,5 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import { decryptFromStorage, type EncryptedBlobMeta } from "$lib/crypto/crypto";
+    import { getStoredMasterKey } from "$lib/crypto/master-key";
     import { getFirebaseAuth, onAuthStateChanged } from "$lib/firebase/client";
     import { authFetch } from "$lib/firebase/auth-fetch";
     import * as AlertDialog from "$lib/components/ui/alert-dialog/index.js";
@@ -13,6 +15,10 @@
     import { page } from "$app/stores";
 
     type FileRef = { name: string; id?: string } | string;
+    type EncryptionInfo = {
+        pdf?: EncryptedBlobMeta;
+        thumbnail?: EncryptedBlobMeta;
+    };
 
     type DocumentItem = {
         id: string;
@@ -26,6 +32,7 @@
         subsectionId?: string | null;
         uploadedAt?: number;
         encrypted?: boolean;
+        encryption?: EncryptionInfo;
     };
 
     type SectionNode = {
@@ -39,15 +46,49 @@
     let sections = $state<SectionNode[]>([]);
     let loading = $state(true);
     let error = $state<string | null>(null);
+    let keyLoading = $state(false);
+    let keyError = $state<string | null>(null);
+    let masterKey = $state<CryptoKey | null>(null);
+    let thumbnailUrls = $state<Record<string, string>>({});
+    let thumbnailLoading = $state<Record<string, boolean>>({});
 
     const getFileName = (file: FileRef) => (typeof file === "string" ? file : file.name);
-    const getFileUrl = (file: FileRef) => {
-        const uid = user?.uid;
-        if (!uid) throw new Error("Нет userId для запроса файла");
-        return `/api/b2/file?name=${encodeURIComponent(getFileName(file))}&userId=${encodeURIComponent(uid)}`;
-    };
     const formatSize = (size?: number | null) =>
         typeof size === "number" ? `${(size / (1024 * 1024)).toFixed(1)} MB` : "";
+
+    const loadMasterKey = async () => {
+        keyLoading = true;
+        keyError = null;
+        try {
+            masterKey = await getStoredMasterKey();
+        } catch (err) {
+            keyError = err instanceof Error ? err.message : "Не удалось загрузить ключ";
+            masterKey = null;
+        } finally {
+            keyLoading = false;
+        }
+    };
+
+    const getSignedDownloadUrl = async (fileName: string) => {
+        const response = await authFetch("/.netlify/functions/get-download-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fileName }),
+        });
+        if (!response.ok) {
+            throw new Error(await response.text());
+        }
+        const data = (await response.json()) as { downloadUrl?: string };
+        if (!data.downloadUrl) throw new Error("downloadUrl is missing");
+        return data.downloadUrl;
+    };
+
+    const fetchEncryptedBytes = async (fileName: string) => {
+        const downloadUrl = await getSignedDownloadUrl(fileName);
+        const response = await fetch(downloadUrl);
+        if (!response.ok) throw new Error(await response.text());
+        return response.arrayBuffer();
+    };
 
     const fetchDocuments = async () => {
         loading = true;
@@ -61,7 +102,7 @@
             documents =
                 (data.documents ?? []).map((doc: DocumentItem) => ({
                     ...doc,
-                    encrypted: doc.encrypted !== false,
+                    encrypted: Boolean(doc.encrypted || doc.encryption),
                 })) ?? [];
         } catch (err) {
             const message = err instanceof Error ? err.message : "Не удалось загрузить документы";
@@ -84,8 +125,37 @@
         }
     };
 
+    const ensureThumbnailUrl = async (doc: DocumentItem) => {
+        const encryption = doc.encryption?.thumbnail;
+        if (!encryption || !masterKey) return;
+        if (thumbnailUrls[doc.id] || thumbnailLoading[doc.id]) return;
+
+        thumbnailLoading = { ...thumbnailLoading, [doc.id]: true };
+        try {
+            const encryptedBytes = await fetchEncryptedBytes(getFileName(doc.files.thumbnail));
+            const plainBytes = await decryptFromStorage(encryptedBytes, encryption, masterKey);
+            const mimeType = encryption.mimeType || "image/jpeg";
+            const blobUrl = URL.createObjectURL(new Blob([plainBytes], { type: mimeType }));
+            thumbnailUrls = { ...thumbnailUrls, [doc.id]: blobUrl };
+        } catch (err) {
+            console.error("Failed to decrypt thumbnail", err);
+        } finally {
+            const next = { ...thumbnailLoading };
+            delete next[doc.id];
+            thumbnailLoading = next;
+        }
+    };
+
     const removeLocalDoc = (id: string) => {
         documents = documents.filter((doc) => doc.id !== id);
+    };
+
+    const revokeAllThumbnailUrls = () => {
+        for (const url of Object.values(thumbnailUrls)) {
+            URL.revokeObjectURL(url);
+        }
+        thumbnailUrls = {};
+        thumbnailLoading = {};
     };
 
     const deleteDocument = async (doc: DocumentItem) => {
@@ -133,14 +203,22 @@
         const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
             user = nextUser;
             if (nextUser) {
+                loadMasterKey();
                 fetchDocuments();
                 fetchSections();
             } else {
+                revokeAllThumbnailUrls();
                 documents = [];
                 loading = false;
+                masterKey = null;
+                keyLoading = false;
+                keyError = null;
             }
         });
-        return () => unsubscribe();
+        return () => {
+            unsubscribe();
+            revokeAllThumbnailUrls();
+        };
     });
 
     // Editing
@@ -262,26 +340,48 @@
         return "";
     };
 
-    const openPdf = (doc: DocumentItem) => {
-        const fallbackUrl = getFileUrl(doc.files.pdf);
-        authFetch("/.netlify/functions/get-download-url", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ fileName: getFileName(doc.files.pdf) }),
-        })
-            .then(async (response) => {
-                if (!response.ok) {
-                    throw new Error(await response.text());
-                }
-                const data = (await response.json()) as { downloadUrl?: string };
-                if (!data.downloadUrl) {
-                    throw new Error("downloadUrl is missing");
-                }
-                window.open(data.downloadUrl, "_blank", "noopener,noreferrer");
-            })
-            .catch(() => {
-                window.open(fallbackUrl, "_blank", "noopener,noreferrer");
-            });
+    const openBlobInNewTab = (blob: Blob) => {
+        const url = URL.createObjectURL(blob);
+        const opened = window.open(url, "_blank", "noopener,noreferrer");
+        if (!opened) {
+            const link = document.createElement("a");
+            link.href = url;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.click();
+        }
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    };
+
+    const openPdf = async (doc: DocumentItem) => {
+        const fileName = getFileName(doc.files.pdf);
+        const encryption = doc.encryption?.pdf;
+        if (encryption) {
+            if (!masterKey) {
+                keyError = "Ключ шифрования не найден. Восстановите его через Upload.";
+                return;
+            }
+            try {
+                keyError = null;
+                const encryptedBytes = await fetchEncryptedBytes(fileName);
+                const plainBytes = await decryptFromStorage(encryptedBytes, encryption, masterKey);
+                const mimeType = encryption.mimeType || "application/pdf";
+                openBlobInNewTab(new Blob([plainBytes], { type: mimeType }));
+                return;
+            } catch (err) {
+                console.error("Failed to decrypt pdf", err);
+                keyError = "Не удалось расшифровать PDF. Проверьте backup phrase и повторите вход.";
+                return;
+            }
+        }
+
+        try {
+            const downloadUrl = await getSignedDownloadUrl(fileName);
+            window.open(downloadUrl, "_blank", "noopener,noreferrer");
+        } catch (err) {
+            console.error("Failed to open pdf", err);
+            keyError = "Не удалось получить ссылку на файл";
+        }
     };
 
     const matchSearch = (doc: DocumentItem, query: string) => {
@@ -327,6 +427,30 @@
     });
 
     const filteredDocs = $derived(applyFilters().filter((doc) => matchSearch(doc, debouncedSearch)));
+    const hasEncryptedDocs = $derived(
+        documents.some((doc) => Boolean(doc.encryption?.pdf || doc.encryption?.thumbnail))
+    );
+
+    $effect(() => {
+        if (!masterKey) return;
+        for (const doc of documents) {
+            if (doc.encryption?.thumbnail) {
+                ensureThumbnailUrl(doc);
+            }
+        }
+    });
+
+    $effect(() => {
+        const docIds = new Set(documents.map((doc) => doc.id));
+        const stale = Object.entries(thumbnailUrls).filter(([id]) => !docIds.has(id));
+        if (stale.length === 0) return;
+        for (const [, url] of stale) {
+            URL.revokeObjectURL(url);
+        }
+        const next = { ...thumbnailUrls };
+        for (const [id] of stale) delete next[id];
+        thumbnailUrls = next;
+    });
 </script>
 
 <div class="flex w-full flex-col gap-6 px-4 py-6">
@@ -372,6 +496,16 @@
             {error}
         </div>
     {:else}
+        {#if keyError}
+            <div class="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                {keyError}
+            </div>
+        {/if}
+        {#if !keyLoading && !masterKey && hasEncryptedDocs}
+            <div class="rounded-md border border-yellow-400/30 bg-yellow-500/10 px-4 py-3 text-sm">
+                Зашифрованные файлы недоступны: восстановите ключ на странице Upload.
+            </div>
+        {/if}
         <div class="flex flex-col gap-8">
             {#if searchQuery.trim()}
                 <section class="space-y-3">
@@ -440,7 +574,7 @@
     {#snippet Card({ doc }: { doc: DocumentItem })}
     <article class="rounded-lg border bg-card shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
         <a
-            href={getFileUrl(doc.files.pdf)}
+            href="/"
             class="flex flex-col gap-2 p-2"
             rel="noreferrer"
             target="_blank"
@@ -451,13 +585,24 @@
             }}
         >
             <div class="relative aspect-[3/4] overflow-hidden rounded-md bg-muted">
-                <img
-                    src={getFileUrl(doc.files.thumbnail)}
-                    alt={doc.title}
-                    loading="lazy"
-                    class="absolute inset-0 h-full w-full object-cover"
-                    onerror={(event) => ((event.currentTarget as HTMLImageElement).style.display = "none")}
-                />
+                {#if doc.encryption?.thumbnail}
+                    {#if thumbnailUrls[doc.id]}
+                        <img
+                            src={thumbnailUrls[doc.id]}
+                            alt={doc.title}
+                            loading="lazy"
+                            class="absolute inset-0 h-full w-full object-cover"
+                        />
+                    {:else}
+                        <div class="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+                            {thumbnailLoading[doc.id] ? "Расшифровка..." : "Нет превью"}
+                        </div>
+                    {/if}
+                {:else}
+                    <div class="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+                        Нет превью
+                    </div>
+                {/if}
             </div>
             <div class="space-y-1">
                 <div class="border-t border-border/60 pt-2">

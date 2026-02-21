@@ -53,14 +53,12 @@ export const verifyUserFromRequest = async (request) => {
 	return decoded.uid;
 };
 
-const getEnv = (primary, fallback) => process.env[primary] ?? process.env[fallback] ?? null;
-
 export const getB2Config = () => {
-	const keyId = getEnv("B2_KEY_ID", "BLACKBAZE_KEYID");
-	const applicationKey = getEnv("B2_APP_KEY", "BLACKBAZE_APPLICATIONKEY");
-	const bucketId = getEnv("B2_BUCKET_ID", "BLACKBAZE_BUCKETID");
-	const bucketName = getEnv("B2_BUCKET_NAME", "BLACKBAZE_BUCKETNAME");
-	const endpoint = getEnv("B2_ENDPOINT", "BLACKBAZE_ENDPOINT");
+	const keyId = process.env.B2_KEY_ID ?? null;
+	const applicationKey = process.env.B2_APP_KEY ?? null;
+	const bucketId = process.env.B2_BUCKET_ID ?? null;
+	const bucketName = process.env.B2_BUCKET_NAME ?? null;
+	const endpoint = process.env.B2_ENDPOINT ?? null;
 
 	if (!keyId || !applicationKey || !bucketId || !bucketName) {
 		throw new Error("Missing B2 credentials");
@@ -130,4 +128,3 @@ export const json = (payload, status = 200) =>
 		status,
 		headers: { "Content-Type": "application/json" },
 	});
-

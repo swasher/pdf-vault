@@ -8,8 +8,8 @@ import { Timestamp } from "firebase-admin/firestore";
 type StoredFile = { name: string; id?: string } | string;
 
 const authorizeB2 = async (fetchFn: typeof fetch) => {
-	const keyId = env.BLACKBAZE_KEYID;
-	const applicationKey = env.BLACKBAZE_APPLICATIONKEY;
+	const keyId = env.B2_KEY_ID;
+	const applicationKey = env.B2_APP_KEY;
 
 	if (!keyId || !applicationKey) {
 		throw error(500, "Backblaze credentials are missing");
@@ -115,7 +115,7 @@ export const DELETE: RequestHandler = async ({ params, fetch, request }) => {
 	const thumbnail = data.files?.thumbnail;
 
 	const authData = await authorizeB2(fetch);
-	const bucketId = env.BLACKBAZE_BUCKETID;
+	const bucketId = env.B2_BUCKET_ID;
 
 	if (!bucketId) {
 		throw error(500, "Backblaze bucketId missing");

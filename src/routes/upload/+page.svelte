@@ -1,5 +1,11 @@
 <script lang="ts">
     import { browser } from "$app/environment";
+    import { encryptForStorage } from "$lib/crypto/crypto";
+    import {
+        createAndStoreMasterKey,
+        getStoredMasterKey,
+        restoreMasterKeyFromPhrase,
+    } from "$lib/crypto/master-key";
     import { authFetch } from "$lib/firebase/auth-fetch";
     import * as FileDropZone from "$lib/components/ui/file-drop-zone/index.js";
     import { getFirebaseAuth, onAuthStateChanged } from "$lib/firebase/client.js";
@@ -34,6 +40,13 @@
     let selectedSectionId = $state<string | null>(null);
     let selectedSubsectionId = $state<string | null>(null);
     let selectedCategory = $state("");
+    let masterKey = $state<CryptoKey | null>(null);
+    let keyLoading = $state(false);
+    let keyError = $state<string | null>(null);
+    let backupPhrase = $state<string | null>(null);
+    let restorePhrase = $state("");
+    let creatingKey = $state(false);
+    let restoringKey = $state(false);
 
     const workerPromise = browser
         ? import("pdfjs-dist/build/pdf.worker.min.mjs?url").then((mod) => mod.default)
@@ -97,6 +110,51 @@
         uploads = uploads.map((item) => (item.id === id ? { ...item, ...patch } : item));
     };
 
+    const loadMasterKey = async () => {
+        keyLoading = true;
+        keyError = null;
+        try {
+            masterKey = await getStoredMasterKey();
+        } catch (err) {
+            keyError = err instanceof Error ? err.message : "Не удалось загрузить ключ";
+            masterKey = null;
+        } finally {
+            keyLoading = false;
+        }
+    };
+
+    const createKey = async () => {
+        creatingKey = true;
+        keyError = null;
+        try {
+            const result = await createAndStoreMasterKey();
+            masterKey = result.key;
+            backupPhrase = result.phrase;
+        } catch (err) {
+            keyError = err instanceof Error ? err.message : "Не удалось создать ключ";
+        } finally {
+            creatingKey = false;
+        }
+    };
+
+    const restoreKey = async () => {
+        if (!restorePhrase.trim()) {
+            keyError = "Введите backup phrase";
+            return;
+        }
+        restoringKey = true;
+        keyError = null;
+        try {
+            masterKey = await restoreMasterKeyFromPhrase(restorePhrase.trim());
+            restorePhrase = "";
+            backupPhrase = null;
+        } catch (err) {
+            keyError = err instanceof Error ? err.message : "Не удалось восстановить ключ";
+        } finally {
+            restoringKey = false;
+        }
+    };
+
     const requestUploadUrl = async (filename: string, kind: "pdf" | "thumbnail") => {
         const response = await authFetch("/.netlify/functions/get-upload-url", {
             method: "POST",
@@ -142,15 +200,32 @@
             if (!user) {
                 throw new Error("Для загрузки необходимо войти");
             }
+            if (!masterKey) {
+                throw new Error("Сначала настройте ключ шифрования");
+            }
             const thumbnailFile = await generateThumbnail(file);
+            const [encryptedPdf, encryptedThumbnail] = await Promise.all([
+                encryptForStorage(await file.arrayBuffer(), masterKey, file.type || "application/pdf"),
+                encryptForStorage(await thumbnailFile.arrayBuffer(), masterKey, "image/jpeg"),
+            ]);
             const [pdfUpload, thumbnailUpload] = await Promise.all([
                 requestUploadUrl(file.name, "pdf"),
                 requestUploadUrl(thumbnailFile.name, "thumbnail"),
             ]);
 
             const [pdfResult, thumbnailResult] = await Promise.all([
-                uploadToB2WithPresignedUrl(file, pdfUpload),
-                uploadToB2WithPresignedUrl(thumbnailFile, thumbnailUpload),
+                uploadToB2WithPresignedUrl(
+                    new File([encryptedPdf.encryptedBytes], "file.bin", {
+                        type: "application/octet-stream",
+                    }),
+                    pdfUpload
+                ),
+                uploadToB2WithPresignedUrl(
+                    new File([encryptedThumbnail.encryptedBytes], "thumbnail.bin", {
+                        type: "application/octet-stream",
+                    }),
+                    thumbnailUpload
+                ),
             ]);
 
             const metadataResponse = await authFetch("/api/documents", {
@@ -167,6 +242,11 @@
                     tags: [],
                     sectionId: selectedSectionId,
                     subsectionId: selectedSubsectionId,
+                    encrypted: true,
+                    encryption: {
+                        pdf: encryptedPdf.encryption,
+                        thumbnail: encryptedThumbnail.encryption,
+                    },
                 }),
             });
             if (!metadataResponse.ok) {
@@ -179,8 +259,8 @@
             // Обновляем статус с URL файла
             updateUpload(id, {
                 status: "done",
-                fileUrl: `/api/b2/file?name=${encodeURIComponent(pdfResult.fileName)}&userId=${encodeURIComponent(user.uid)}`,
-                thumbnailUrl: `/api/b2/file?name=${encodeURIComponent(thumbnailResult.fileName)}&userId=${encodeURIComponent(user.uid)}`,
+                fileUrl: URL.createObjectURL(file),
+                thumbnailUrl: URL.createObjectURL(thumbnailFile),
             });
         } catch (err) {
             const message = err instanceof Error ? err.message : "Upload failed";
@@ -211,6 +291,7 @@
                 user = nextUser;
                 authError = nextUser ? null : "Для загрузки войдите в аккаунт";
                 if (nextUser) {
+                    loadMasterKey();
                     Promise.allSettled([
                         authFetch(`/api/sections`).then((res) =>
                             res.ok ? res.json() : Promise.reject(new Error(res.statusText))
@@ -227,6 +308,9 @@
                     selectedSectionId = null;
                     selectedSubsectionId = null;
                     selectedCategory = "";
+                    masterKey = null;
+                    backupPhrase = null;
+                    keyError = null;
                 }
             });
         } else {
@@ -236,6 +320,50 @@
 </script>
 
 <div class="flex w-full flex-col gap-4 p-6">
+    {#if user && keyLoading}
+        <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm">
+            Проверяем ключ шифрования...
+        </div>
+    {:else if user && !masterKey}
+        <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm space-y-3">
+            <p class="font-medium">Настройка ключа шифрования</p>
+            <p class="text-muted-foreground">
+                Для загрузки нужен мастер-ключ. Создайте новый ключ или восстановите его из backup phrase.
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+                <button
+                    class="rounded-md border px-3 py-2 text-xs"
+                    onclick={createKey}
+                    disabled={creatingKey || restoringKey}
+                >
+                    {creatingKey ? "Создаем..." : "Создать новый ключ"}
+                </button>
+                <input
+                    class="border-input bg-background text-foreground focus-visible:ring-ring/50 focus-visible:outline-none rounded-md border px-3 py-2 text-sm shadow-sm focus-visible:ring-2 min-w-72"
+                    placeholder="Вставьте backup phrase"
+                    bind:value={restorePhrase}
+                    disabled={creatingKey || restoringKey}
+                />
+                <button
+                    class="rounded-md border px-3 py-2 text-xs"
+                    onclick={restoreKey}
+                    disabled={creatingKey || restoringKey}
+                >
+                    {restoringKey ? "Восстанавливаем..." : "Восстановить"}
+                </button>
+            </div>
+            {#if backupPhrase}
+                <div class="rounded-md border border-yellow-400/40 bg-yellow-500/10 px-3 py-2 text-xs">
+                    <p class="font-medium">Сохраните backup phrase</p>
+                    <p class="mt-1 font-mono break-all">{backupPhrase}</p>
+                </div>
+            {/if}
+            {#if keyError}
+                <div class="text-destructive text-xs">{keyError}</div>
+            {/if}
+        </div>
+    {/if}
+
     <div class="flex flex-col gap-2">
         <label class="flex flex-col gap-1 text-sm">
             <span class="text-muted-foreground">Раздел</span>
@@ -282,7 +410,7 @@
             accept="application/pdf"
             maxFileSize={200 * FileDropZone.MEGABYTE}
             fileCount={uploads.length}
-            disabled={!user}
+            disabled={!user || keyLoading || !masterKey}
     >
         <FileDropZone.Trigger />
     </FileDropZone.Root>

@@ -21,7 +21,7 @@
 - Sidebar (`src/lib/components/app-sidebar.svelte`): разделы/подразделы, edit-mode, создание/переименование/удаление разделов.
 - Главная (`src/routes/+page.svelte`): карточки документов, редактирование метаданных, удаление.
 - Upload (`src/routes/upload/+page.svelte`): drag&drop PDF, генерация thumbnail, выбор section/subsection.
-- Settings (`src/routes/settings/+page.svelte`): хранение B2 кредов пользователя (через API).
+- Settings (`src/routes/settings/+page.svelte`): информационная страница по текущей схеме хранения/шифрования.
 
 ### API (as-is)
 - Документы:
@@ -30,25 +30,17 @@
 - Разделы:
   - `GET/POST /api/sections`
   - `PATCH/DELETE /api/sections/[id]`
-- B2:
-  - `POST /api/b2/upload-url`
-  - `GET /api/b2/file`
-  - `GET /api/b2/list` (вспомогательный)
-- Настройки:
-  - `GET/POST /api/user/b2`
-  - `GET/POST /api/settings` (legacy для `encryptionKeyHash`)
+- Netlify Functions:
+  - `POST /.netlify/functions/get-upload-url`
+  - `POST /.netlify/functions/get-download-url`
 
 ### Данные Firestore (as-is)
 - Коллекция `documents`: `title`, `description`, `tags`, `files.pdf/thumbnail`, `metadata.fileName`, `sectionId`, `subsectionId`, `uploadedAt`, `encrypted`.
 - Коллекция `sections`: `title`, `parentId`, `order`, `userId`.
-- `users/{uid}/settings/b2`: зашифрованные B2 credentials (через `B2_MASTER_SECRET`) и fallback на env.
-- Legacy: `users/{uid}/settings/encryption` (`encryptionKeyHash`).
 
 ### Известные проблемы as-is
-- Аутентификация серверных API неполная: во многих местах доверие к `userId` из query/body.
-- Смешанная модель B2: часть маршрутов работает через per-user creds, часть через глобальные env.
-- Регрессия на upload: осталась ссылка на `hasKey` в `src/routes/upload/+page.svelte`, при этом клиентское шифрование вырезано.
-- `svelte-check` не зеленый (типовые ошибки в UI).
+- Проверить smoke-тестом после deploy, что Netlify Functions получают все обязательные env (`B2_*`, `FIREBASE_ADMIN_CREDENTIALS*`).
+- Добавить e2e-проверку сценария восстановления доступа через backup phrase на новом устройстве.
 
 ## 2. Целевая архитектура (to-be)
 
@@ -94,8 +86,7 @@
 ## 4. Переменные окружения
 
 ### Текущие (используются в коде)
-- `BLACKBAZE_KEYID`, `BLACKBAZE_APPLICATIONKEY`, `BLACKBAZE_BUCKETID`, `BLACKBAZE_BUCKETNAME`, `BLACKBAZE_ENDPOINT`
-- `B2_MASTER_SECRET`
+- `B2_KEY_ID`, `B2_APP_KEY`, `B2_BUCKET_ID`, `B2_BUCKET_NAME`, `B2_ENDPOINT`
 - `FIREBASE_ADMIN_CREDENTIALS` или `FIREBASE_ADMIN_CREDENTIALS_PATH`
 - `PUBLIC_FIREBASE_*`
 
@@ -105,7 +96,7 @@
 - `FIREBASE_ADMIN_CREDENTIALS` (предпочтительно для Netlify)
 - Публичные `PUBLIC_FIREBASE_*`
 
-На этапе миграции допускается поддержка алиасов старых имен env, затем удаление legacy.
+Legacy aliases `BLACKBAZE_*` и `B2_MASTER_SECRET` удалены из runtime-кода.
 
 ## 5. Правила безопасности и инварианты
 
@@ -117,9 +108,10 @@
 
 ## 6. Практические договоренности по кодовой базе
 
-- Не добавлять новую функциональность в legacy маршруты `/api/b2/*` (кроме временной совместимости).
+- Legacy маршруты `/api/b2/*`, `/api/user/b2`, `/api/settings` удалены.
 - Новые изменения проектировать вокруг client crypto + presigned URL.
 - Для поиска по репозиторию использовать `rg`/`rg --files` (и `fd`, `ast-grep` при необходимости).
+- Стараться не использовать медленный Get-Content
 
 ## 7. Scope разделов/навигации
 
