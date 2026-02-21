@@ -1,6 +1,7 @@
 <script lang="ts">
     import * as Sidebar from "$lib/components/ui/sidebar/index.js";
     import * as Dialog from "$lib/components/ui/dialog/index.js";
+    import { page } from "$app/stores";
     import { Button } from "$lib/components/ui/button/index.js";
     import { ConfirmDeleteDialog, confirmDelete } from "$lib/components/ui/confirm-delete-dialog/index.js";
     import GalleryVerticalEndIcon from "@lucide/svelte/icons/gallery-vertical-end";
@@ -26,6 +27,7 @@
     let loading = $state(false);
     let error = $state<string | null>(null);
     let editMode = $state(false);
+    let currentView = $derived($page.url.searchParams.get("view"));
 
     const fetchSections = async () => {
         loading = true;
@@ -191,7 +193,7 @@
             {:else if !user}
                 <div class="px-3 py-2 text-xs text-muted-foreground">Войдите, чтобы увидеть разделы.</div>
             {:else if sections.length === 0}
-                <div class="px-3 py-2 text-xs text-muted-foreground">Разделов пока нет.</div>
+                <div class="px-3 py-2 text-xs text-muted-foreground">Пользовательских разделов пока нет.</div>
             {/if}
             <Sidebar.Menu>
                 {#each sections as item (item.id)}
@@ -292,6 +294,31 @@
                     </Sidebar.MenuItem>
                 {/each}
             </Sidebar.Menu>
+            {#if user}
+                <div class="mx-2 my-2 border-t border-sidebar-border/70"></div>
+                <Sidebar.Menu>
+                    <Sidebar.MenuItem>
+                        <Sidebar.MenuButton
+                            isActive={currentView === "latest"}
+                            class="font-medium text-muted-foreground/80 hover:text-sidebar-foreground"
+                        >
+                            {#snippet child({ props })}
+                                <a href="/?view=latest" {...props}>Последние</a>
+                            {/snippet}
+                        </Sidebar.MenuButton>
+                    </Sidebar.MenuItem>
+                    <Sidebar.MenuItem>
+                        <Sidebar.MenuButton
+                            isActive={currentView === "uncategorized"}
+                            class="font-medium text-muted-foreground/80 hover:text-sidebar-foreground"
+                        >
+                            {#snippet child({ props })}
+                                <a href="/?view=uncategorized" {...props}>Без категории</a>
+                            {/snippet}
+                        </Sidebar.MenuButton>
+                    </Sidebar.MenuItem>
+                </Sidebar.Menu>
+            {/if}
         </Sidebar.Group>
         <div class="mt-auto border-t px-3 py-3">
             <div class="flex items-center justify-between gap-2">

@@ -238,6 +238,10 @@
     let saveError = $state<string | null>(null);
     let filterSectionId = $derived<string | null>($page.url.searchParams.get("section"));
     let filterSubsectionId = $derived<string | null>($page.url.searchParams.get("subsection"));
+    let filterViewRaw = $derived<string | null>($page.url.searchParams.get("view"));
+    let filterView = $derived<"latest" | "uncategorized" | null>(
+        filterViewRaw === "latest" || filterViewRaw === "uncategorized" ? filterViewRaw : null
+    );
     let searchQuery = $state("");
     let isSearching = $state(false);
     $effect(() => {
@@ -321,16 +325,6 @@
     const uncategorizedDocuments = () =>
         filteredDocs.filter((doc) => !doc.sectionId && !doc.subsectionId);
 
-    const filteredDocuments = () => {
-        if (filterSubsectionId) {
-            return filteredDocs.filter((doc) => doc.subsectionId === filterSubsectionId);
-        }
-        if (filterSectionId) {
-            return filteredDocs.filter((doc) => doc.sectionId === filterSectionId);
-        }
-        return filteredDocs;
-    };
-
     const findSectionTitle = (sectionId: string | null) => {
         if (!sectionId) return "";
         return sections.find((s) => s.id === sectionId)?.title ?? "";
@@ -411,13 +405,23 @@
     };
 
     const applyFilters = () => {
-        const base = documents.filter((doc) => {
+        const sectionFiltered = documents.filter((doc) => {
             if (filterSubsectionId) return doc.subsectionId === filterSubsectionId;
             if (filterSectionId) return doc.sectionId === filterSectionId;
             return true;
         });
-        if (!searchQuery.trim()) return base;
-        return base.filter((doc) => matchSearch(doc, searchQuery));
+
+        if (filterView === "uncategorized") {
+            return sectionFiltered.filter((doc) => !doc.sectionId && !doc.subsectionId);
+        }
+
+        if (filterView === "latest") {
+            return [...sectionFiltered]
+                .sort((a, b) => (b.uploadedAt ?? 0) - (a.uploadedAt ?? 0))
+                .slice(0, 20);
+        }
+
+        return sectionFiltered;
     };
 
     let debouncedSearch = $state("");
@@ -463,12 +467,20 @@
         <Breadcrumb.Root>
             <Breadcrumb.List>
                 <Breadcrumb.Item>
-                    {#if filterSectionId}
+                    {#if filterSectionId || filterView}
                         <Breadcrumb.Link href="/">Главная</Breadcrumb.Link>
                     {:else}
                         <Breadcrumb.Page>Главная</Breadcrumb.Page>
                     {/if}
                 </Breadcrumb.Item>
+                {#if filterView}
+                    <Breadcrumb.Separator />
+                    <Breadcrumb.Item>
+                        <Breadcrumb.Page>
+                            {filterView === "latest" ? "Последние" : "Без категории"}
+                        </Breadcrumb.Page>
+                    </Breadcrumb.Item>
+                {/if}
                 {#if filterSectionId}
                     <Breadcrumb.Separator />
                     <Breadcrumb.Item>
@@ -528,13 +540,23 @@
                         </div>
                     {/if}
                 </section>
-            {:else if filterSectionId || filterSubsectionId}
+            {:else if filterSectionId || filterSubsectionId || filterView}
                 <section class="space-y-3">
-                    {#if filteredDocuments().length === 0}
+                    {#if filterView}
+                        <div class="flex items-center justify-between">
+                            <h2 class="text-lg font-semibold">
+                                {filterView === "latest" ? "Последние" : "Без категории"}
+                            </h2>
+                            {#if filterView === "latest"}
+                                <span class="text-xs text-muted-foreground">20 последних загрузок</span>
+                            {/if}
+                        </div>
+                    {/if}
+                    {#if filteredDocs.length === 0}
                         <p class="text-muted-foreground text-sm">Документов не найдено.</p>
                     {:else}
                         <div class="grid gap-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
-                            {#each filteredDocuments() as doc (doc.id)}
+                            {#each filteredDocs as doc (doc.id)}
                                 {@render Card({ doc })}
                             {/each}
                         </div>
