@@ -7,6 +7,11 @@ import {
 } from "./_shared.mjs";
 
 const encodeB2Path = (name) => name.split("/").map((chunk) => encodeURIComponent(chunk)).join("/");
+const normalizeBaseUrl = (value) => {
+	if (!value || typeof value !== "string") return value;
+	const withProtocol = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+	return withProtocol.replace(/\/+$/, "");
+};
 
 export default async (request) => {
 	if (request.method !== "POST") {
@@ -34,7 +39,7 @@ export default async (request) => {
 			validDurationInSeconds: Math.max(1, Math.min(Number(validDurationInSeconds) || 3600, 86400)),
 		});
 
-		const baseDownloadUrl = config.endpoint ?? auth.downloadUrl;
+		const baseDownloadUrl = normalizeBaseUrl(config.endpoint ?? auth.downloadUrl);
 		const encodedPath = encodeB2Path(fileName);
 		const signedUrl = `${baseDownloadUrl}/file/${config.bucketName}/${encodedPath}?Authorization=${encodeURIComponent(downloadAuth.authorizationToken)}`;
 

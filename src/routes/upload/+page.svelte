@@ -1,6 +1,6 @@
 <script lang="ts">
     import { browser } from "$app/environment";
-    import { encryptForStorage } from "$lib/crypto/crypto";
+    import { encryptForStorage, masterKeyToPhrase } from "$lib/crypto/crypto";
     import {
         createAndStoreMasterKey,
         getStoredMasterKey,
@@ -47,6 +47,7 @@
     let restorePhrase = $state("");
     let creatingKey = $state(false);
     let restoringKey = $state(false);
+    let revealingPhrase = $state(false);
 
     const workerPromise = browser
         ? import("pdfjs-dist/build/pdf.worker.min.mjs?url").then((mod) => mod.default)
@@ -152,6 +153,19 @@
             keyError = err instanceof Error ? err.message : "Не удалось восстановить ключ";
         } finally {
             restoringKey = false;
+        }
+    };
+
+    const revealBackupPhrase = async () => {
+        if (!masterKey) return;
+        revealingPhrase = true;
+        keyError = null;
+        try {
+            backupPhrase = await masterKeyToPhrase(masterKey);
+        } catch (err) {
+            keyError = err instanceof Error ? err.message : "Не удалось показать backup phrase";
+        } finally {
+            revealingPhrase = false;
         }
     };
 
@@ -356,6 +370,37 @@
                 >
                     {restoringKey ? "Восстанавливаем..." : "Восстановить"}
                 </button>
+            </div>
+            {#if backupPhrase}
+                <div class="rounded-md border border-yellow-400/40 bg-yellow-500/10 px-3 py-2 text-xs">
+                    <p class="font-medium">Сохраните backup phrase</p>
+                    <p class="mt-1 font-mono break-all">{backupPhrase}</p>
+                </div>
+            {/if}
+            {#if keyError}
+                <div class="text-destructive text-xs">{keyError}</div>
+            {/if}
+        </div>
+    {:else if user && masterKey}
+        <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm space-y-3">
+            <p class="font-medium">Ключ шифрования активен</p>
+            <p class="text-muted-foreground">
+                Рекомендуется сохранить backup phrase: она нужна для доступа к файлам на новом устройстве.
+            </p>
+            <div class="flex items-center gap-2">
+                <button class="rounded-md border px-3 py-2 text-xs" onclick={revealBackupPhrase} disabled={revealingPhrase}>
+                    {revealingPhrase ? "Показываем..." : "Показать backup phrase"}
+                </button>
+                {#if backupPhrase}
+                    <button
+                        class="rounded-md border px-3 py-2 text-xs"
+                        onclick={() => {
+                            backupPhrase = null;
+                        }}
+                    >
+                        Скрыть
+                    </button>
+                {/if}
             </div>
             {#if backupPhrase}
                 <div class="rounded-md border border-yellow-400/40 bg-yellow-500/10 px-3 py-2 text-xs">
