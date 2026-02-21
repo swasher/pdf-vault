@@ -369,13 +369,7 @@
         }
     };
 
-    const latestDocuments = () =>
-        [...filteredDocs]
-            .sort((a, b) => (b.uploadedAt ?? 0) - (a.uploadedAt ?? 0))
-            .slice(0, 5);
-
-    const uncategorizedDocuments = () =>
-        filteredDocs.filter((doc) => !doc.sectionId && !doc.subsectionId);
+    const mainDocuments = () => filteredDocs.slice(0, 20);
 
     const findSectionTitle = (sectionId: string | null) => {
         if (!sectionId) return "";
@@ -630,29 +624,14 @@
             {:else}
                 <section class="space-y-3">
                     <div class="flex items-center justify-between">
-                        <h2 class="text-lg font-semibold">Последние</h2>
-                        <span class="text-xs text-muted-foreground">5 последних загрузок</span>
+                        <h2 class="text-lg font-semibold">PDF</h2>
+                        <span class="text-xs text-muted-foreground">Первые 20 файлов</span>
                     </div>
-                    {#if latestDocuments().length === 0}
-                        <p class="text-muted-foreground text-sm">Недавних файлов нет.</p>
+                    {#if mainDocuments().length === 0}
+                        <p class="text-muted-foreground text-sm">Файлов пока нет.</p>
                     {:else}
                         <div class="grid gap-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
-                            {#each latestDocuments() as doc (doc.id)}
-                                {@render Card({ doc })}
-                            {/each}
-                        </div>
-                    {/if}
-                </section>
-
-                <section class="space-y-3">
-                    <div class="flex items-center justify-between">
-                        <h2 class="text-lg font-semibold">Без раздела</h2>
-                    </div>
-                    {#if uncategorizedDocuments().length === 0}
-                        <p class="text-muted-foreground text-sm">Все документы привязаны к разделам.</p>
-                    {:else}
-                        <div class="grid gap-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
-                            {#each uncategorizedDocuments() as doc (doc.id)}
+                            {#each mainDocuments() as doc (doc.id)}
                                 {@render Card({ doc })}
                             {/each}
                         </div>
