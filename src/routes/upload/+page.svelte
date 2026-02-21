@@ -34,9 +34,6 @@
     let selectedSectionId = $state<string | null>(null);
     let selectedSubsectionId = $state<string | null>(null);
     let selectedCategory = $state("");
-    let hasDocuments = $state<boolean | null>(null);
-    let checking = $state(false);
-    let b2Exists = $state<boolean | null>(null);
 
     const workerPromise = browser
         ? import("pdfjs-dist/build/pdf.worker.min.mjs?url").then((mod) => mod.default)
@@ -100,6 +97,43 @@
         uploads = uploads.map((item) => (item.id === id ? { ...item, ...patch } : item));
     };
 
+    const requestUploadUrl = async (filename: string, kind: "pdf" | "thumbnail") => {
+        const response = await authFetch("/.netlify/functions/get-upload-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filename, kind }),
+        });
+        if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.message ?? "Не удалось получить upload URL");
+        }
+        return response.json() as Promise<{
+            uploadUrl: string;
+            uploadAuthToken: string;
+            fileName: string;
+        }>;
+    };
+
+    const uploadToB2WithPresignedUrl = async (
+        file: File,
+        upload: { uploadUrl: string; uploadAuthToken: string; fileName: string }
+    ) => {
+        const response = await fetch(upload.uploadUrl, {
+            method: "POST",
+            headers: {
+                Authorization: upload.uploadAuthToken,
+                "X-Bz-File-Name": encodeURIComponent(upload.fileName),
+                "Content-Type": file.type || "b2/x-auto",
+                "X-Bz-Content-Sha1": "do_not_verify",
+            },
+            body: file,
+        });
+        if (!response.ok) {
+            throw new Error(`B2 upload failed (${response.status})`);
+        }
+        return response.json() as Promise<{ fileId: string; fileName: string }>;
+    };
+
     const uploadFile = async (file: File) => {
         const id = crypto.randomUUID();
         uploads = [...uploads, { id, name: file.name, size: file.size, status: "uploading" }];
@@ -109,34 +143,44 @@
                 throw new Error("Для загрузки необходимо войти");
             }
             const thumbnailFile = await generateThumbnail(file);
+            const [pdfUpload, thumbnailUpload] = await Promise.all([
+                requestUploadUrl(file.name, "pdf"),
+                requestUploadUrl(thumbnailFile.name, "thumbnail"),
+            ]);
 
-            // Создаем FormData и отправляем файл и миниатюру
-            const formData = new FormData();
-            formData.append("file", file);
-            formData.append("thumbnail", thumbnailFile);
-            formData.append("thumbnailName", thumbnailFile.name);
-            formData.append("title", file.name.replace(/\.[^/.]+$/, ""));
-            formData.append("userId", user.uid);
-            if (selectedSectionId) formData.append("sectionId", selectedSectionId);
-            if (selectedSubsectionId) formData.append("subsectionId", selectedSubsectionId);
+            const [pdfResult, thumbnailResult] = await Promise.all([
+                uploadToB2WithPresignedUrl(file, pdfUpload),
+                uploadToB2WithPresignedUrl(thumbnailFile, thumbnailUpload),
+            ]);
 
-            const response = await authFetch("/api/b2/upload-url", {
+            const metadataResponse = await authFetch("/api/documents", {
                 method: "POST",
-                body: formData, // Отправляем FormData, а не JSON
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    title: file.name.replace(/\.[^/.]+$/, ""),
+                    fileSize: file.size,
+                    files: {
+                        pdf: { name: pdfResult.fileName, id: pdfResult.fileId },
+                        thumbnail: { name: thumbnailResult.fileName, id: thumbnailResult.fileId },
+                    },
+                    metadata: { fileName: file.name },
+                    tags: [],
+                    sectionId: selectedSectionId,
+                    subsectionId: selectedSubsectionId,
+                }),
             });
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ message: "Upload failed" }));
-                throw new Error(errorData.message || "Upload failed");
+            if (!metadataResponse.ok) {
+                const errorData = await metadataResponse
+                    .json()
+                    .catch(() => ({ message: "Не удалось сохранить документ" }));
+                throw new Error(errorData.message ?? "Не удалось сохранить документ");
             }
-
-            const result = await response.json();
 
             // Обновляем статус с URL файла
             updateUpload(id, {
                 status: "done",
-                fileUrl: result.fileUrl,
-                thumbnailUrl: result.thumbnail?.fileUrl ?? undefined
+                fileUrl: `/api/b2/file?name=${encodeURIComponent(pdfResult.fileName)}&userId=${encodeURIComponent(user.uid)}`,
+                thumbnailUrl: `/api/b2/file?name=${encodeURIComponent(thumbnailResult.fileName)}&userId=${encodeURIComponent(user.uid)}`,
             });
         } catch (err) {
             const message = err instanceof Error ? err.message : "Upload failed";
@@ -160,20 +204,6 @@
         uploads = [];
     };
 
-    const fetchSettings = async (uid: string) => {
-        const res = await authFetch(`/api/user/b2?userId=${encodeURIComponent(uid)}`);
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        b2Exists = data.exists ?? false;
-    };
-
-    const checkDocs = async () => {
-        const res = await authFetch("/api/documents?limit=1");
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        hasDocuments = (data.documents ?? []).length > 0;
-    };
-
     if (browser) {
         const auth = getFirebaseAuth();
         if (auth) {
@@ -181,30 +211,22 @@
                 user = nextUser;
                 authError = nextUser ? null : "Для загрузки войдите в аккаунт";
                 if (nextUser) {
-                    checking = true;
                     Promise.allSettled([
                         authFetch(`/api/sections`).then((res) =>
                             res.ok ? res.json() : Promise.reject(new Error(res.statusText))
                         ),
-                        fetchSettings(nextUser.uid),
-                        checkDocs(),
                     ])
                         .then(([sectionsResult]) => {
                             if (sectionsResult?.status === "fulfilled") {
                                 sections = sectionsResult.value.sections ?? [];
                             }
                         })
-                        .catch((err) => console.error("Failed to load initial data", err))
-                        .finally(() => {
-                            checking = false;
-                        });
+                        .catch((err) => console.error("Failed to load sections", err));
                 } else {
                     sections = [];
                     selectedSectionId = null;
                     selectedSubsectionId = null;
                     selectedCategory = "";
-                    hasDocuments = null;
-                    b2Exists = null;
                 }
             });
         } else {
@@ -214,14 +236,6 @@
 </script>
 
 <div class="flex w-full flex-col gap-4 p-6">
-    {#if hasDocuments === false && b2Exists === false}
-        <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm">
-            <p class="font-medium">Не заданы B2 настройки</p>
-            <p class="text-muted-foreground">Добавьте Backblaze креды на странице Settings.</p>
-            <a class="text-primary text-sm hover:underline" href="/settings">Перейти в Settings</a>
-        </div>
-    {/if}
-
     <div class="flex flex-col gap-2">
         <label class="flex flex-col gap-1 text-sm">
             <span class="text-muted-foreground">Раздел</span>
@@ -268,7 +282,7 @@
             accept="application/pdf"
             maxFileSize={200 * FileDropZone.MEGABYTE}
             fileCount={uploads.length}
-            disabled={!user || (hasDocuments === false && b2Exists === false)}
+            disabled={!user}
     >
         <FileDropZone.Trigger />
     </FileDropZone.Root>

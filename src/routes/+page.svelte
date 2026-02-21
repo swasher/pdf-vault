@@ -39,8 +39,6 @@
     let sections = $state<SectionNode[]>([]);
     let loading = $state(true);
     let error = $state<string | null>(null);
-    let settingsLoaded = $state(false);
-    let b2Exists = $state<boolean | null>(null);
 
     const getFileName = (file: FileRef) => (typeof file === "string" ? file : file.name);
     const getFileUrl = (file: FileRef) => {
@@ -83,20 +81,6 @@
         } catch (err) {
             console.error("Failed to load sections", err);
             sections = [];
-        }
-    };
-
-    const fetchSettings = async (uid: string) => {
-        try {
-            const res = await authFetch(`/api/user/b2?userId=${encodeURIComponent(uid)}`);
-            if (!res.ok) throw new Error(await res.text());
-            const data = await res.json();
-            b2Exists = data.exists ?? false;
-        } catch (err) {
-            console.error("Failed to load settings", err);
-            b2Exists = null;
-        } finally {
-            settingsLoaded = true;
         }
     };
 
@@ -151,12 +135,9 @@
             if (nextUser) {
                 fetchDocuments();
                 fetchSections();
-                fetchSettings(nextUser.uid);
             } else {
                 documents = [];
                 loading = false;
-                b2Exists = null;
-                settingsLoaded = false;
             }
         });
         return () => unsubscribe();
@@ -281,10 +262,26 @@
         return "";
     };
 
-    const requireB2Gate = $derived(!loading && settingsLoaded && b2Exists === false);
-
     const openPdf = (doc: DocumentItem) => {
-        window.open(getFileUrl(doc.files.pdf), "_blank");
+        const fallbackUrl = getFileUrl(doc.files.pdf);
+        authFetch("/.netlify/functions/get-download-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fileName: getFileName(doc.files.pdf) }),
+        })
+            .then(async (response) => {
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+                const data = (await response.json()) as { downloadUrl?: string };
+                if (!data.downloadUrl) {
+                    throw new Error("downloadUrl is missing");
+                }
+                window.open(data.downloadUrl, "_blank", "noopener,noreferrer");
+            })
+            .catch(() => {
+                window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+            });
     };
 
     const matchSearch = (doc: DocumentItem, query: string) => {
@@ -370,12 +367,6 @@
         <p class="text-muted-foreground text-sm">Загружаем список...</p>
     {:else if !user}
         <p class="text-muted-foreground text-sm">Войдите, чтобы увидеть свои документы.</p>
-    {:else if requireB2Gate}
-        <div class="rounded-md border border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm">
-            <p class="font-medium">Не заданы B2 настройки</p>
-            <p class="text-muted-foreground">Добавьте Backblaze креды в Settings.</p>
-            <a class="text-primary text-sm hover:underline" href="/settings">Перейти в Settings</a>
-        </div>
     {:else if error}
         <div class="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
@@ -454,7 +445,9 @@
             rel="noreferrer"
             target="_blank"
             onclick={(event) => {
+                event.preventDefault();
                 event.stopPropagation();
+                openPdf(doc);
             }}
         >
             <div class="relative aspect-[3/4] overflow-hidden rounded-md bg-muted">
