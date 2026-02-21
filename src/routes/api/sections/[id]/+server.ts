@@ -1,6 +1,7 @@
 import { error, json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import { getAdminDb } from "$lib/firebase/server";
+import { requireUserId } from "$lib/server/auth";
 import { Timestamp } from "firebase-admin/firestore";
 
 const chunk = <T,>(arr: T[], size: number) => {
@@ -28,12 +29,10 @@ const collectDocIds = async ({
 	return results;
 };
 
-export const DELETE: RequestHandler = async ({ params, url, fetch }) => {
+export const DELETE: RequestHandler = async ({ params, fetch, request }) => {
+	const userId = await requireUserId({ request });
+	const authHeader = request.headers.get("authorization");
 	const { id } = params;
-	const userId = url.searchParams.get("userId");
-	if (!userId) {
-		throw error(400, "userId is required");
-	}
 
 	const db = getAdminDb();
 	const sectionRef = db.collection("sections").doc(id);
@@ -59,7 +58,10 @@ export const DELETE: RequestHandler = async ({ params, url, fetch }) => {
 
 	// удаляем документы через существующий API, который чистит B2
 	for (const docId of docIds) {
-		await fetch(`/api/documents/${docId}`, { method: "DELETE" });
+		await fetch(`/api/documents/${docId}`, {
+			method: "DELETE",
+			headers: authHeader ? { Authorization: authHeader } : undefined,
+		});
 	}
 
 	// удаляем дочерние секции и родителя
@@ -72,13 +74,11 @@ export const DELETE: RequestHandler = async ({ params, url, fetch }) => {
 };
 
 export const PATCH: RequestHandler = async ({ params, request }) => {
+	const userId = await requireUserId({ request });
 	const { id } = params;
 	const body = await request.json();
-	const { userId, title } = body ?? {};
+	const { title } = body ?? {};
 
-	if (!userId) {
-		throw error(400, "userId is required");
-	}
 	if (typeof title !== "string" || !title.trim()) {
 		throw error(400, "title is required");
 	}

@@ -1,6 +1,7 @@
 import { env } from "$env/dynamic/private";
 import { error, json } from "@sveltejs/kit";
 import { getAdminDb } from "$lib/firebase/server";
+import { requireUserId } from "$lib/server/auth";
 import type { RequestHandler } from "./$types";
 import { Timestamp } from "firebase-admin/firestore";
 
@@ -92,7 +93,8 @@ const deleteFileVersion = async ({
 	});
 };
 
-export const DELETE: RequestHandler = async ({ params, fetch }) => {
+export const DELETE: RequestHandler = async ({ params, fetch, request }) => {
+	const userId = await requireUserId({ request });
 	const { id } = params;
 	const db = getAdminDb();
 	const docRef = db.collection("documents").doc(id);
@@ -100,6 +102,9 @@ export const DELETE: RequestHandler = async ({ params, fetch }) => {
 
 	if (!snap.exists) {
 		throw error(404, "Document not found");
+	}
+	if (snap.data()?.userId !== userId) {
+		throw error(403, "Not your document");
 	}
 
 	const data = snap.data() as {
@@ -142,11 +147,11 @@ export const DELETE: RequestHandler = async ({ params, fetch }) => {
 };
 
 export const PATCH: RequestHandler = async ({ params, request }) => {
+	const userId = await requireUserId({ request });
 	const { id } = params;
 	const body = await request.json();
-	const { userId, title, description, tags, sectionId = null, subsectionId = null } = body ?? {};
+	const { title, description, tags, sectionId = null, subsectionId = null } = body ?? {};
 
-	if (!userId) throw error(400, "userId is required");
 	if (title !== undefined && typeof title !== "string") throw error(400, "title must be a string");
 	if (description !== undefined && typeof description !== "string") throw error(400, "description must be a string");
 	if (tags !== undefined && !Array.isArray(tags)) throw error(400, "tags must be an array");

@@ -155,6 +155,9 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
+				...(request.headers.get("authorization")
+					? { Authorization: request.headers.get("authorization")! }
+					: {}),
 			},
 			body: JSON.stringify(payload),
 		});

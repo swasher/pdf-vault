@@ -1,13 +1,14 @@
 import { error, json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import { getAdminDb } from "$lib/firebase/server";
+import { requireUserId } from "$lib/server/auth";
 import { Timestamp } from "firebase-admin/firestore";
 
 export const POST: RequestHandler = async ({ request }) => {
+	const userId = await requireUserId({ request });
 	const body = await request.json();
 
 	const {
-		userId,
 		title,
 		description = "",
 		tags = [],
@@ -19,7 +20,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		subsectionId = null,
 	} = body ?? {};
 
-	if (!userId || !title || !files?.pdf || !files?.thumbnail) {
+	if (!title || !files?.pdf || !files?.thumbnail) {
 		throw error(400, "Missing required fields");
 	}
 
@@ -43,14 +44,10 @@ export const POST: RequestHandler = async ({ request }) => {
 	return json({ id: docRef.id });
 };
 
-export const GET: RequestHandler = async ({ url }) => {
-	const userId = url.searchParams.get("userId");
+export const GET: RequestHandler = async ({ request, url }) => {
+	const userId = await requireUserId({ request });
 	const limitParam = Number(url.searchParams.get("limit") ?? 200);
 	const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 500) : 200;
-
-	if (!userId) {
-		throw error(400, "userId is required");
-	}
 
 	const db = getAdminDb();
 

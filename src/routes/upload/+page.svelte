@@ -1,5 +1,6 @@
 <script lang="ts">
     import { browser } from "$app/environment";
+    import { authFetch } from "$lib/firebase/auth-fetch";
     import * as FileDropZone from "$lib/components/ui/file-drop-zone/index.js";
     import { getFirebaseAuth, onAuthStateChanged } from "$lib/firebase/client.js";
     import type { User } from "firebase/auth";
@@ -119,7 +120,7 @@
             if (selectedSectionId) formData.append("sectionId", selectedSectionId);
             if (selectedSubsectionId) formData.append("subsectionId", selectedSubsectionId);
 
-            const response = await fetch("/api/b2/upload-url", {
+            const response = await authFetch("/api/b2/upload-url", {
                 method: "POST",
                 body: formData, // Отправляем FormData, а не JSON
             });
@@ -160,21 +161,14 @@
     };
 
     const fetchSettings = async (uid: string) => {
-        const res = await fetch(`/api/user/b2?userId=${encodeURIComponent(uid)}`);
+        const res = await authFetch(`/api/user/b2?userId=${encodeURIComponent(uid)}`);
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         b2Exists = data.exists ?? false;
     };
 
-    const fetchB2Status = async (uid: string) => {
-        const res = await fetch(`/api/user/b2?userId=${encodeURIComponent(uid)}`);
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        b2Exists = data.exists ?? false;
-    };
-
-    const checkDocs = async (uid: string) => {
-        const res = await fetch(`/api/documents?userId=${encodeURIComponent(uid)}&limit=1`);
+    const checkDocs = async () => {
+        const res = await authFetch("/api/documents?limit=1");
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         hasDocuments = (data.documents ?? []).length > 0;
@@ -189,11 +183,11 @@
                 if (nextUser) {
                     checking = true;
                     Promise.allSettled([
-                        fetch(`/api/sections?userId=${encodeURIComponent(nextUser.uid)}`).then((res) =>
+                        authFetch(`/api/sections`).then((res) =>
                             res.ok ? res.json() : Promise.reject(new Error(res.statusText))
                         ),
                         fetchSettings(nextUser.uid),
-                        checkDocs(nextUser.uid),
+                        checkDocs(),
                     ])
                         .then(([sectionsResult]) => {
                             if (sectionsResult?.status === "fulfilled") {
@@ -274,7 +268,7 @@
             accept="application/pdf"
             maxFileSize={200 * FileDropZone.MEGABYTE}
             fileCount={uploads.length}
-            disabled={!user || (hasKey === false && hasDocuments === false) || b2Exists === false}
+            disabled={!user || (hasDocuments === false && b2Exists === false)}
     >
         <FileDropZone.Trigger />
     </FileDropZone.Root>

@@ -74,7 +74,7 @@
             url.searchParams.delete("q");
         }
         goto(`${url.pathname}${url.search ? `?${url.searchParams.toString()}` : ""}`, {
-            keepfocus: true,
+            keepFocus: true,
             replaceState: true,
             noScroll: true,
         });

@@ -1,6 +1,7 @@
 import { error, json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import { getAdminDb } from "$lib/firebase/server";
+import { requireUserId } from "$lib/server/auth";
 import { Timestamp } from "firebase-admin/firestore";
 
 type SectionRecord = {
@@ -11,12 +12,8 @@ type SectionRecord = {
 	createdAt: Timestamp;
 };
 
-export const GET: RequestHandler = async ({ url }) => {
-	const userId = url.searchParams.get("userId");
-	if (!userId) {
-		throw error(400, "userId is required");
-	}
-
+export const GET: RequestHandler = async ({ request }) => {
+	const userId = await requireUserId({ request });
 	const db = getAdminDb();
 	const snapshot = await db.collection("sections").where("userId", "==", userId).get();
 
@@ -49,11 +46,12 @@ export const GET: RequestHandler = async ({ url }) => {
 };
 
 export const POST: RequestHandler = async ({ request }) => {
+	const userId = await requireUserId({ request });
 	const body = await request.json();
-	const { userId, title, parentId = null } = body ?? {};
+	const { title, parentId = null } = body ?? {};
 
-	if (!userId || !title) {
-		throw error(400, "userId and title are required");
+	if (!title) {
+		throw error(400, "title is required");
 	}
 
 	const db = getAdminDb();

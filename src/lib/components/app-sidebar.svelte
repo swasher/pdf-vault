@@ -8,6 +8,7 @@
     import MinusIcon from "@lucide/svelte/icons/minus";
     import PencilIcon from "@lucide/svelte/icons/pencil";
     import { browser } from "$app/environment";
+    import { authFetch } from "$lib/firebase/auth-fetch";
     import { getFirebaseAuth, onAuthStateChanged } from "$lib/firebase/client.js";
     import type { ComponentProps } from "svelte";
     import type { User } from "firebase/auth";
@@ -26,11 +27,11 @@
     let error = $state<string | null>(null);
     let editMode = $state(false);
 
-    const fetchSections = async (uid: string) => {
+    const fetchSections = async () => {
         loading = true;
         error = null;
         try {
-            const response = await fetch(`/api/sections?userId=${encodeURIComponent(uid)}`);
+            const response = await authFetch("/api/sections");
             if (!response.ok) throw new Error(await response.text());
             const data = await response.json();
             sections = data.sections ?? [];
@@ -80,12 +81,12 @@
         creating = true;
         createError = null;
         try {
-            await fetch("/api/sections", {
+            await authFetch("/api/sections", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId: user.uid, title: createTitle.trim(), parentId: createParentId }),
+                body: JSON.stringify({ title: createTitle.trim(), parentId: createParentId }),
             });
-            await fetchSections(user.uid);
+            await fetchSections();
             createDialogOpen = false;
         } catch (err) {
             createError = err instanceof Error ? err.message : "Не удалось создать";
@@ -110,15 +111,15 @@
         renaming = true;
         renameError = null;
         try {
-            const response = await fetch(`/api/sections/${renameTargetId}`, {
+            const response = await authFetch(`/api/sections/${renameTargetId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId: user.uid, title: renameTitle.trim() }),
+                body: JSON.stringify({ title: renameTitle.trim() }),
             });
             if (!response.ok) {
                 throw new Error(await response.text());
             }
-            await fetchSections(user.uid);
+            await fetchSections();
             renameDialogOpen = false;
         } catch (err) {
             renameError = err instanceof Error ? err.message : "Не удалось переименовать";
@@ -129,8 +130,8 @@
 
     const deleteSection = async (id: string) => {
         if (!user) return;
-        await fetch(`/api/sections/${id}?userId=${encodeURIComponent(user.uid)}`, { method: "DELETE" });
-        await fetchSections(user.uid);
+        await authFetch(`/api/sections/${id}`, { method: "DELETE" });
+        await fetchSections();
     };
 
     if (browser) {
@@ -139,7 +140,7 @@
             onAuthStateChanged(auth, (nextUser) => {
                 user = nextUser;
                 if (nextUser) {
-                    fetchSections(nextUser.uid);
+                    fetchSections();
                 } else {
                     sections = [];
                 }

@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { getFirebaseAuth, onAuthStateChanged } from "$lib/firebase/client";
+    import { authFetch } from "$lib/firebase/auth-fetch";
     import * as AlertDialog from "$lib/components/ui/alert-dialog/index.js";
     import * as Dialog from "$lib/components/ui/dialog/index.js";
     import * as Breadcrumb from "$lib/components/ui/breadcrumb/index.js";
@@ -16,6 +17,7 @@
     type DocumentItem = {
         id: string;
         title: string;
+        description?: string;
         files: { pdf: FileRef; thumbnail: FileRef };
         tags?: string[];
         fileSize?: number;
@@ -48,13 +50,12 @@
     };
     const formatSize = (size?: number | null) =>
         typeof size === "number" ? `${(size / (1024 * 1024)).toFixed(1)} MB` : "";
-    const getKeyPhrase = () => "";
 
-    const fetchDocuments = async (uid: string) => {
+    const fetchDocuments = async () => {
         loading = true;
         error = null;
         try {
-            const response = await fetch(`/api/documents?userId=${encodeURIComponent(uid)}&limit=200`);
+            const response = await authFetch("/api/documents?limit=200");
             if (!response.ok) {
                 throw new Error(await response.text());
             }
@@ -73,9 +74,9 @@
         }
     };
 
-    const fetchSections = async (uid: string) => {
+    const fetchSections = async () => {
         try {
-            const response = await fetch(`/api/sections?userId=${encodeURIComponent(uid)}`);
+            const response = await authFetch("/api/sections");
             if (!response.ok) throw new Error(await response.text());
             const data = await response.json();
             sections = data.sections ?? [];
@@ -87,7 +88,7 @@
 
     const fetchSettings = async (uid: string) => {
         try {
-            const res = await fetch(`/api/user/b2?userId=${encodeURIComponent(uid)}`);
+            const res = await authFetch(`/api/user/b2?userId=${encodeURIComponent(uid)}`);
             if (!res.ok) throw new Error(await res.text());
             const data = await res.json();
             b2Exists = data.exists ?? false;
@@ -104,7 +105,7 @@
     };
 
     const deleteDocument = async (doc: DocumentItem) => {
-        const response = await fetch(`/api/documents/${doc.id}`, { method: "DELETE" });
+        const response = await authFetch(`/api/documents/${doc.id}`, { method: "DELETE" });
         if (!response.ok) {
             throw new Error(await response.text());
         }
@@ -148,8 +149,8 @@
         const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
             user = nextUser;
             if (nextUser) {
-                fetchDocuments(nextUser.uid);
-                fetchSections(nextUser.uid);
+                fetchDocuments();
+                fetchSections();
                 fetchSettings(nextUser.uid);
             } else {
                 documents = [];
@@ -216,11 +217,10 @@
         saveError = null;
         try {
             const targetId = editTarget.id;
-            await fetch(`/api/documents/${targetId}`, {
+            await authFetch(`/api/documents/${targetId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    userId: user.uid,
                     title: editTitle.trim(),
                     description: editDescription.trim(),
                     tags: editTags,
@@ -590,7 +590,7 @@
                     rows={3}
                     bind:value={editDescription}
                     placeholder="Краткое описание"
-                />
+                ></textarea>
             </label>
             <div class="flex flex-col gap-1 text-sm">
                 <span class="text-muted-foreground">Теги</span>
